@@ -449,110 +449,119 @@ function App() {
       </div>
 
       <form className="photo-template-form" onSubmit={handleSubmit}>
-        <div className="form-group">
-          <label htmlFor="name">Nom:</label>
-          <input
-            id="name"
-            name="name"
-            type="text"
-            value={formData.name}
-            onChange={handleInputChange}
-            placeholder="Nom du template..."
-            disabled={isLoading}
-          />
-        </div>
-
-        <div className="form-group">
-          <label>Sélection des zones de recadrage:</label>
-          <div className="crop-mode-buttons" style={{ marginBottom: '10px' }}>
-            <button
-              type="button"
-              onClick={() => setCurrentCropMode('photo')}
-              className={`btn ${currentCropMode === 'photo' ? 'btn-primary' : 'btn-secondary'}`}
-              style={{ marginRight: '10px' }}
-            >
-              Zone Photo (Rouge)
-            </button>
-            <button
-              type="button"
-              onClick={() => setCurrentCropMode('number')}
-              className={`btn ${currentCropMode === 'number' ? 'btn-primary' : 'btn-secondary'}`}
-            >
-              Zone Numéro (Bleu)
-            </button>
-          </div>
-          <p style={{ fontSize: '0.9em', color: '#666', margin: '5px 0' }}>
-            Mode actuel: {currentCropMode === 'photo' ? 'Sélection zone photo' : 'Sélection zone numéro'}
-          </p>
-        </div>
-
-        <div className="form-group">
-          <label htmlFor="template_img">Image du template:</label>
-          <input
-            id="template_img_upload"
-            name="template_img_upload"
-            type="file"
-            accept="image/*"
-            onChange={handleFileUpload}
-            disabled={isLoading}
-          />
-          {uploadedImage && (
-            <div className="image-crop-container" style={{ position: 'relative', marginTop: '10px' }}>
-              <img 
-                src={uploadedImage} 
-                alt="Template" 
-                style={{ maxWidth: '100%', height: 'auto', display: 'block' }}
-                onLoad={(e) => {
-                  const img = e.target as HTMLImageElement;
-                  const canvas = canvasRef.current;
-                  if (canvas) {
-                    canvas.width = img.clientWidth;
-                    canvas.height = img.clientHeight;
-                  }
-                }}
+        <div className="editor-layout">
+          <div className="form-fields">
+            <div className="form-group">
+              <label htmlFor="name">Nom:</label>
+              <input
+                id="name"
+                name="name"
+                type="text"
+                value={formData.name}
+                onChange={handleInputChange}
+                placeholder="Nom du template..."
+                disabled={isLoading}
               />
-              <canvas
-                ref={canvasRef}
-                style={{ 
-                  position: 'absolute', 
-                  top: 0, 
-                  left: 0, 
-                  cursor: 'crosshair',
-                  pointerEvents: 'auto'
-                }}
-                onMouseDown={handleMouseDown}
-                onMouseMove={handleMouseMove}
-                onMouseUp={handleMouseUp}
-              />
-              <div style={{ marginTop: '10px', fontSize: '0.9em', color: '#666' }}>
-                {cropRect.width > 0 && cropRect.height > 0 && (
-                  <p style={{ color: '#ff0000', margin: '5px 0' }}>
-                    Zone Photo (Rouge): {Math.round(cropRect.x)}, {Math.round(cropRect.y)}, {Math.round(cropRect.width)}×{Math.round(cropRect.height)}
-                  </p>
-                )}
-                {cropNumberRect.width > 0 && cropNumberRect.height > 0 && (
-                  <p style={{ color: '#0000ff', margin: '5px 0' }}>
-                    Zone Numéro (Bleu): {Math.round(cropNumberRect.x)}, {Math.round(cropNumberRect.y)}, {Math.round(cropNumberRect.width)}×{Math.round(cropNumberRect.height)}
-                  </p>
-                )}
-                {cropRect.width === 0 && cropRect.height === 0 && cropNumberRect.width === 0 && cropNumberRect.height === 0 && (
-                  <p style={{ fontStyle: 'italic', margin: '5px 0' }}>
-                    Aucune zone de recadrage définie. Utilisez les boutons ci-dessus pour choisir le mode, puis dessinez sur l'image.
-                  </p>
-                )}
-              </div>
             </div>
-          )}
-          <input
-            type="hidden"
-            name="template_img"
-            value={formData.template_img}
-          />
+
+            <div className="form-group">
+              <label>Sélection des zones de recadrage:</label>
+              <div className="crop-mode-buttons">
+                <button
+                  type="button"
+                  onClick={() => setCurrentCropMode('photo')}
+                  className={`btn ${currentCropMode === 'photo' ? 'btn-primary' : 'btn-secondary'}`}
+                >
+                  Zone Photo (Rouge)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCurrentCropMode('number')}
+                  className={`btn ${currentCropMode === 'number' ? 'btn-primary' : 'btn-secondary'}`}
+                >
+                  Zone Numéro (Bleu)
+                </button>
+              </div>
+              <p className="crop-mode-helper">
+                Mode actuel: {currentCropMode === 'photo' ? 'Sélection zone photo' : 'Sélection zone numéro'}
+              </p>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="template_img_upload">Image du template:</label>
+              <input
+                id="template_img_upload"
+                name="template_img_upload"
+                type="file"
+                accept="image/*"
+                onChange={handleFileUpload}
+                disabled={isLoading}
+              />
+            </div>
+          </div>
+
+          <div className="crop-preview-panel">
+            <h2 className="crop-panel-title">Définition des cadrages</h2>
+            {uploadedImage ? (
+              <>
+                <div className="image-crop-container">
+                  <div className="crop-stage">
+                    <img
+                      src={uploadedImage}
+                      alt="Template"
+                      onLoad={(event) => {
+                        const imgElement = event.currentTarget;
+                        const canvas = canvasRef.current;
+                        if (canvas) {
+                          canvas.width = imgElement.clientWidth;
+                          canvas.height = imgElement.clientHeight;
+                          drawCropRect();
+                        }
+                      }}
+                    />
+                    <canvas
+                      ref={canvasRef}
+                      onMouseDown={handleMouseDown}
+                      onMouseMove={handleMouseMove}
+                      onMouseUp={handleMouseUp}
+                    />
+                  </div>
+                </div>
+                <div className="crop-coordinates">
+                  {cropRect.width > 0 && cropRect.height > 0 && (
+                    <p className="photo-coords">
+                      Zone Photo (Rouge): {Math.round(cropRect.x)}, {Math.round(cropRect.y)}, {Math.round(cropRect.width)}×{Math.round(cropRect.height)}
+                    </p>
+                  )}
+                  {cropNumberRect.width > 0 && cropNumberRect.height > 0 && (
+                    <p className="number-coords">
+                      Zone Numéro (Bleu): {Math.round(cropNumberRect.x)}, {Math.round(cropNumberRect.y)}, {Math.round(cropNumberRect.width)}×{Math.round(cropNumberRect.height)}
+                    </p>
+                  )}
+                  {cropRect.width === 0 && cropRect.height === 0 && cropNumberRect.width === 0 && cropNumberRect.height === 0 && (
+                    <p className="empty-coords">
+                      Aucune zone de recadrage définie. Utilisez les boutons ci-dessus pour choisir le mode, puis dessinez sur l'image.
+                    </p>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="crop-placeholder">
+                Téléchargez une image de template pour définir les zones de recadrage.
+              </div>
+            )}
+          </div>
         </div>
+
+        <input
+          type="hidden"
+          name="template_img"
+          value={formData.template_img}
+        />
 
         <div className="form-actions">
           <button type="submit" disabled={isLoading} className="btn btn-primary">
-            {isLoading 
+            {isLoading
               ? (currentMode === 'create' ? "Création en cours..." : "Modification en cours...")
               : (currentMode === 'create' ? "Créer Photo Template" : "Sauvegarder les modifications")
             }
