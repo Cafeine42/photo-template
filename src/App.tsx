@@ -1,15 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import TemplateGenerationView from "./components/TemplateGenerationView";
+import type { PhotoTemplate } from "./types";
 import "./App.css";
-
-interface PhotoTemplate {
-  id: number;
-  name: string;
-  crop_photo: string;
-  crop_number: string;
-  template_img: string;
-}
 
 type ViewMode = 'list' | 'create' | 'edit' | 'generate';
 
@@ -457,103 +451,20 @@ function App() {
   // Generation View
   if (currentMode === 'generate') {
     return (
-      <main className="container">
-        <div className="header">
-          <h1>Génération d'images</h1>
-          <button onClick={switchToListMode} className="btn btn-secondary">
-            Retour à la liste
-          </button>
-        </div>
-
-        {message && <p className={`message ${message.includes('Erreur') ? 'error' : 'success'}`}>{message}</p>}
-
-        <div className="generation-form">
-          {/* Template Selection */}
-          <div className="form-group">
-            <label htmlFor="template-select">Sélectionner un template:</label>
-            <select
-              id="template-select"
-              value={selectedTemplate?.id || ''}
-              onChange={(e) => {
-                const templateId = parseInt(e.target.value);
-                const template = photoTemplates.find(t => t.id === templateId);
-                setSelectedTemplate(template || null);
-              }}
-              disabled={isGenerating}
-            >
-              <option value="">Choisir un template...</option>
-              {photoTemplates.map(template => (
-                <option key={template.id} value={template.id}>
-                  {template.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Folder Selection */}
-          <div className="form-group">
-            <label htmlFor="folder-path">Dossier d'images source:</label>
-            <div className="folder-selection">
-              <input
-                id="folder-path"
-                type="text"
-                value={selectedImageFolder}
-                placeholder="Aucun dossier sélectionné"
-                readOnly
-                disabled={isGenerating}
-              />
-              <button
-                type="button"
-                onClick={selectImageFolder}
-                className="btn btn-secondary"
-                disabled={isGenerating}
-              >
-                Parcourir
-              </button>
-            </div>
-          </div>
-
-          {/* Generation Controls */}
-          <div className="form-actions">
-            <button
-              onClick={generateImages}
-              disabled={!selectedTemplate || !selectedImageFolder || isGenerating}
-              className="btn btn-primary"
-            >
-              {isGenerating ? 'Génération en cours...' : 'Lancer la génération'}
-            </button>
-          </div>
-
-          {/* Progress Bar */}
-          {isGenerating && (
-            <div className="progress-container">
-              <div className="progress-bar">
-                <div 
-                  className="progress-fill" 
-                  style={{ width: `${generationProgress}%` }}
-                ></div>
-              </div>
-              <p className="progress-text">
-                Progression: {Math.round(generationProgress)}%
-              </p>
-            </div>
-          )}
-
-          {/* Download Section */}
-          {archivePath && !isGenerating && (
-            <div className="download-section">
-              <p className="success-message">✅ Génération terminée avec succès!</p>
-              <button
-                onClick={downloadArchive}
-                className="btn btn-success"
-              >
-                Télécharger l'archive
-              </button>
-              <p className="archive-path">Archive créée: {archivePath}</p>
-            </div>
-          )}
-        </div>
-      </main>
+      <TemplateGenerationView
+        photoTemplates={photoTemplates}
+        selectedTemplate={selectedTemplate}
+        onSelectTemplate={(template) => setSelectedTemplate(template)}
+        selectedImageFolder={selectedImageFolder}
+        onSelectFolder={selectImageFolder}
+        onGenerate={generateImages}
+        generationProgress={generationProgress}
+        isGenerating={isGenerating}
+        archivePath={archivePath}
+        onDownload={downloadArchive}
+        onBack={switchToListMode}
+        message={message}
+      />
     );
   }
 
