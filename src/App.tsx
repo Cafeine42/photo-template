@@ -1,15 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import TemplateListView from "./components/TemplateListView";
+import { PhotoTemplate } from "./types/photoTemplate";
 import "./App.css";
-
-interface PhotoTemplate {
-  id: number;
-  name: string;
-  crop_photo: string;
-  crop_number: string;
-  template_img: string;
-}
 
 type ViewMode = 'list' | 'create' | 'edit' | 'generate';
 
@@ -205,6 +199,10 @@ function App() {
   const switchToListMode = () => {
     resetForm();
     setCurrentMode('list');
+  };
+
+  const switchToGenerateMode = () => {
+    setCurrentMode('generate');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -408,49 +406,14 @@ function App() {
   // List View
   if (currentMode === 'list') {
     return (
-      <main className="container">
-        <div className="header">
-          <h1>Liste des Photo Templates</h1>
-          <div className="header-buttons">
-            <button onClick={switchToCreateMode} className="btn btn-primary">
-              Créer un nouveau Photo Template
-            </button>
-            <button onClick={() => setCurrentMode('generate')} className="btn btn-success">
-              Générer des images
-            </button>
-          </div>
-        </div>
-
-        {message && <p className={`message ${message.includes('Erreur') ? 'error' : 'success'}`}>{message}</p>}
-
-        <div className="templates-list">
-          {photoTemplates.length === 0 ? (
-            <p>Aucun Photo Template trouvé. Créez-en un nouveau !</p>
-          ) : (
-            photoTemplates.map((template) => (
-              <div key={template.id} className="template-card">
-                <h3>{template.name}</h3>
-                <p><strong>Numéro de recadrage:</strong> {template.crop_number}</p>
-                <p><strong>Image du template:</strong> {template.template_img}</p>
-                <div className="template-actions">
-                  <button 
-                    onClick={() => switchToEditMode(template)}
-                    className="btn btn-secondary"
-                  >
-                    Modifier
-                  </button>
-                  <button 
-                    onClick={() => handleDelete(template.id)}
-                    className="btn btn-danger"
-                  >
-                    Supprimer
-                  </button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </main>
+      <TemplateListView
+        photoTemplates={photoTemplates}
+        message={message}
+        onCreate={switchToCreateMode}
+        onGenerate={switchToGenerateMode}
+        onEdit={switchToEditMode}
+        onDelete={handleDelete}
+      />
     );
   }
 
