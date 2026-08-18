@@ -49,12 +49,13 @@ const handlePositions = (rect: RectShape): Record<Handle, { x: number; y: number
   w: { x: rect.x, y: rect.y + rect.height / 2 },
 });
 
-const getHandleAt = (point: { x: number; y: number }, rect: RectShape): Handle | null => {
+const getHandleAt = (point: { x: number; y: number }, rect: RectShape, canvasScale: number): Handle | null => {
   if (rect.width <= 0 || rect.height <= 0) return null;
+  const hitRadius = HANDLE_HIT_RADIUS * canvasScale;
   const handles = handlePositions(rect);
   for (const key of Object.keys(handles) as Handle[]) {
     const h = handles[key];
-    if (Math.abs(point.x - h.x) <= HANDLE_HIT_RADIUS && Math.abs(point.y - h.y) <= HANDLE_HIT_RADIUS) {
+    if (Math.abs(point.x - h.x) <= hitRadius && Math.abs(point.y - h.y) <= hitRadius) {
       return key;
     }
   }
@@ -605,6 +606,20 @@ function App() {
     };
   };
 
+  // Ratio between the canvas's backing store (== the template's real pixel
+  // dimensions, so crop coordinates line up with what the backend applies
+  // them to) and its on-screen CSS size (which shrinks to fit the panel and
+  // changes with zoom). Used to keep handle hit-testing/drawing and stroke
+  // widths a consistent on-screen size regardless of the template's
+  // resolution or the current zoom level.
+  const getCanvasScale = (): number => {
+    const canvas = canvasRef.current;
+    if (!canvas) return 1;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width === 0) return 1;
+    return canvas.width / rect.width;
+  };
+
   const setActiveRect = (next: RectShape) => {
     if (currentCropMode === 'photo') {
       setCropRect(next);
@@ -632,7 +647,7 @@ function App() {
   // (click on one of its 8 handles).
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const point = getCanvasPoint(e);
-    const handle = getHandleAt(point, activeRect);
+    const handle = getHandleAt(point, activeRect, getCanvasScale());
 
     let kind: DragKind;
     if (handle) {
@@ -655,7 +670,7 @@ function App() {
     if (!isDrawing || !dragStateRef.current) {
       // Not dragging: just give the user a hint of what a click would do.
       if (canvas) {
-        const handle = getHandleAt(point, activeRect);
+        const handle = getHandleAt(point, activeRect, getCanvasScale());
         if (handle) {
           canvas.style.cursor = CURSOR_BY_HANDLE[handle];
         } else if (isInsideRect(point, activeRect)) {
@@ -717,23 +732,31 @@ function App() {
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+    // The canvas backing store is sized to the template's real pixel
+    // dimensions (see the <img onLoad> below), so strokes/handles/labels
+    // must be scaled up from their intended on-screen size accordingly —
+    // otherwise they'd render as a sliver of a pixel on a high-resolution
+    // template.
+    const canvasScale = getCanvasScale();
+    const handleSize = HANDLE_DRAW_SIZE * canvasScale;
+
     const drawHandles = (rect: RectShape, color: string) => {
       if (rect.width <= 0 || rect.height <= 0) return;
       ctx.fillStyle = color;
       Object.values(handlePositions(rect)).forEach(({ x, y }) => {
-        ctx.fillRect(x - HANDLE_DRAW_SIZE / 2, y - HANDLE_DRAW_SIZE / 2, HANDLE_DRAW_SIZE, HANDLE_DRAW_SIZE);
+        ctx.fillRect(x - handleSize / 2, y - handleSize / 2, handleSize, handleSize);
       });
     };
 
     // Draw crop_photo rectangle (red)
     if (cropRect.width > 0 && cropRect.height > 0) {
       ctx.strokeStyle = '#ff0000';
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2 * canvasScale;
       ctx.strokeRect(cropRect.x, cropRect.y, cropRect.width, cropRect.height);
 
       ctx.fillStyle = '#ff0000';
-      ctx.font = '12px Arial';
-      ctx.fillText('Photo', cropRect.x, cropRect.y - 5);
+      ctx.font = `${12 * canvasScale}px Arial`;
+      ctx.fillText('Photo', cropRect.x, cropRect.y - 5 * canvasScale);
 
       if (currentCropMode === 'photo') drawHandles(cropRect, '#ff0000');
     }
@@ -741,12 +764,12 @@ function App() {
     // Draw crop_number rectangle (blue)
     if (cropNumberRect.width > 0 && cropNumberRect.height > 0) {
       ctx.strokeStyle = '#0000ff';
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2 * canvasScale;
       ctx.strokeRect(cropNumberRect.x, cropNumberRect.y, cropNumberRect.width, cropNumberRect.height);
 
       ctx.fillStyle = '#0000ff';
-      ctx.font = '12px Arial';
-      ctx.fillText('Number', cropNumberRect.x, cropNumberRect.y - 5);
+      ctx.font = `${12 * canvasScale}px Arial`;
+      ctx.fillText('Number', cropNumberRect.x, cropNumberRect.y - 5 * canvasScale);
 
       if (currentCropMode === 'number') drawHandles(cropNumberRect, '#0000ff');
     }
@@ -1012,8 +1035,14 @@ function App() {
                         const imgElement = event.currentTarget;
                         const canvas = canvasRef.current;
                         if (canvas) {
-                          canvas.width = imgElement.clientWidth;
-                          canvas.height = imgElement.clientHeight;
+                          // Backing store matches the template's real pixel
+                          // dimensions (not its on-screen CSS size) so the
+                          // saved crop coordinates line up with what the
+                          // Rust backend applies them to when compositing —
+                          // the CSS below still scales it down visually to
+                          // fit the panel.
+                          canvas.width = imgElement.naturalWidth;
+                          canvas.height = imgElement.naturalHeight;
                           drawCropRect();
                         }
                       }}
