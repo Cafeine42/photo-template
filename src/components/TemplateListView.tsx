@@ -6,6 +6,7 @@ type TemplateListViewProps = {
   onGenerate: () => void;
   onHistory: () => void;
   onEdit: (template: PhotoTemplate) => void;
+  onDuplicate: (template: PhotoTemplate) => void;
   onDelete: (template: PhotoTemplate) => void;
 };
 
@@ -15,6 +16,7 @@ const TemplateListView = ({
   onGenerate,
   onHistory,
   onEdit,
+  onDuplicate,
   onDelete,
 }: TemplateListViewProps) => {
   return (
@@ -57,6 +59,12 @@ const TemplateListView = ({
                   className="btn btn-secondary"
                 >
                   Modifier
+                </button>
+                <button
+                  onClick={() => onDuplicate(template)}
+                  className="btn btn-secondary"
+                >
+                  Dupliquer
                 </button>
                 <button
                   onClick={() => onDelete(template)}

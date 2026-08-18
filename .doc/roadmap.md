@@ -29,34 +29,17 @@ résultat avant, ni revenir en arrière si le rendu est mauvais.
 10. ✅ **Choix du dossier de sortie** — sélecteur de dossier de sortie optionnel (`select_output_folder`).
 11. ✅ **Historique des générations** — table `generation_history` + vue `HistoryView`.
 
-## Phase 3 — Édition de template plus précise et plus riche
+## Phase 3 — Édition de template plus précise et plus riche ✅ fait
 
-Concerne l'écran de création/modification, actuellement limité au dessin approximatif
+Concerne l'écran de création/modification, initialement limité au dessin approximatif
 à la souris.
 
-12. **Ajustement fin des zones après tracé**
-    Une fois une zone dessinée, impossible de la redimensionner ou déplacer : il faut
-    tout redessiner depuis zéro pour un ajustement d'un pixel. Ajouter des poignées de
-    redimensionnement/déplacement (comme un éditeur d'image classique) change
-    beaucoup l'expérience.
-13. **Saisie manuelle des coordonnées**
-    Compléter le dessin à la souris par des champs numériques (x, y, largeur,
-    hauteur) pour un positionnement au pixel près, utile pour aligner plusieurs
-    templates entre eux.
-14. **Zoom sur l'image de template**
-    Pour les templates en haute résolution ou les petites zones, dessiner précisément
-    sur une image compressée à la taille de l'écran est difficile. Un zoom/pan
-    faciliterait le travail de précision.
-15. **Personnalisation du texte du numéro**
-    Une fois le rendu du texte implémenté (Phase 1), permettre de choisir police,
-    taille, couleur, alignement — pas juste une valeur codée en dur.
-16. **Remplacement d'image sans perdre les zones**
-    Changer l'image du template réinitialise actuellement les deux zones de
-    recadrage. Si la nouvelle image a les mêmes dimensions/mise en page (ex. légère
-    retouche), on devrait pouvoir garder les zones déjà définies.
-17. **Duplication d'un template existant**
-    Pour créer une variante d'un template (ex. même mise en page, texte différent),
-    partir d'une copie plutôt que de recommencer le dessin des zones à zéro.
+12. ✅ **Ajustement fin des zones après tracé** — poignées de redimensionnement (8 points) et déplacement par glisser-déposer (`getHandleAt`, `resizeRect`), avec retour visuel du curseur.
+13. ✅ **Saisie manuelle des coordonnées** — champs numériques x/y/largeur/hauteur pour la zone active.
+14. ✅ **Zoom sur l'image de template** — contrôle 100–300% (`zoomLevel`), mapping souris→canvas corrigé pour rester précis à tout niveau de zoom.
+15. ✅ **Personnalisation du texte du numéro** — couleur (sélecteur hexadécimal) et taille (slider, multiplicateur `fontScale`), rendues côté Rust.
+16. ✅ **Remplacement d'image sans perdre les zones** — les zones ne sont plus réinitialisées à l'upload d'une nouvelle image.
+17. ✅ **Duplication d'un template existant** — bouton "Dupliquer" dans la liste, pré-remplit le formulaire de création à partir d'un template existant.
 
 ## Phase 4 — Confort, organisation, montée en charge
 

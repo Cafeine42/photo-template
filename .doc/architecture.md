@@ -33,8 +33,13 @@
 | `types/generation.ts` | Types `GenerationPreparation`, `GenerationEntryPreview`, `GenerationHistoryEntry`, miroirs des structures Rust retournées par les commandes de génération. |
 
 Le formulaire de création/édition n'a **pas** été extrait en composant séparé (contrairement
-aux deux autres vues) — il vit toujours directement dans `App.tsx` (~250 lignes), avec toute
-la logique de dessin sur canvas (`handleMouseDown/Move/Up`, `drawCropRect`).
+aux autres vues) — il vit toujours directement dans `App.tsx`, avec toute la logique
+d'édition des zones de recadrage : dessin, déplacement et redimensionnement via poignées
+(`handleMouseDown/Move/Up`, `getHandleAt`, `resizeRect`, `drawCropRect`), zoom
+(`zoomLevel`, transform CSS sur `.crop-stage`), et ajustement par champs numériques
+(`updateActiveRectField`). Les coordonnées souris sont converties en coordonnées canvas
+via `getCanvasPoint` (ratio `canvas.width / rect.width`), ce qui rend le mapping correct
+quel que soit le niveau de zoom appliqué.
 
 ## Backend Rust (`src-tauri/src/`)
 

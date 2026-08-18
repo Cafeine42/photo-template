@@ -305,11 +305,78 @@ button {
   min-height: 520px;
 }
 
+.crop-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
 .crop-panel-title {
   margin: 0;
   font-size: 1.35rem;
   font-weight: 600;
   color: #1f2937;
+}
+
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.zoom-controls .btn {
+  margin: 0;
+  padding: 0.35em 0.9em;
+}
+
+.zoom-level {
+  min-width: 3.5em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: #4b5563;
+}
+
+.coord-inputs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.75rem;
+}
+
+.coord-inputs label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #4b5563;
+}
+
+.coord-inputs input {
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+}
+
+.number-style-controls {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-end;
+}
+
+.number-style-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #4b5563;
+}
+
+.number-style-controls input[type="color"] {
+  padding: 0.2rem;
+  width: 3rem;
+  height: 2.2rem;
 }
 
 .crop-mode-buttons {
@@ -406,6 +473,7 @@ button[type="submit"]:disabled {
   align-items: center;
   justify-content: center;
   min-height: 480px;
+  overflow: auto;
 }
 
 @media (max-width: 1024px) {
@@ -781,6 +849,15 @@ button[type="submit"]:disabled {
 
   .crop-panel-title {
     color: #f9fafb;
+  }
+
+  .zoom-level {
+    color: #d1d5db;
+  }
+
+  .coord-inputs label,
+  .number-style-controls label {
+    color: #d1d5db;
   }
 
   .form-group label {

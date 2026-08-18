@@ -15,6 +15,70 @@ type ViewMode = 'list' | 'create' | 'edit' | 'generate' | 'history';
 const LAST_IMAGE_FOLDER_KEY = "photo-template:lastImageFolder";
 const LAST_OUTPUT_FOLDER_KEY = "photo-template:lastOutputFolder";
 
+// --- Crop zone geometry (resize/move handles, zoom-aware coordinates) ---
+
+type Handle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
+type RectShape = { x: number; y: number; width: number; height: number };
+type DragKind = { type: 'new' } | { type: 'move' } | { type: 'resize'; handle: Handle };
+
+const DEFAULT_RECT: RectShape = { x: 0, y: 0, width: 0, height: 0 };
+const DEFAULT_NUMBER_RECT = { ...DEFAULT_RECT, color: '#000000', fontScale: 1 };
+
+const HANDLE_HIT_RADIUS = 8;
+const HANDLE_DRAW_SIZE = 6;
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 3;
+const ZOOM_STEP = 0.25;
+
+const CURSOR_BY_HANDLE: Record<Handle, string> = {
+  nw: 'nwse-resize', se: 'nwse-resize',
+  ne: 'nesw-resize', sw: 'nesw-resize',
+  n: 'ns-resize', s: 'ns-resize',
+  e: 'ew-resize', w: 'ew-resize',
+};
+
+const handlePositions = (rect: RectShape): Record<Handle, { x: number; y: number }> => ({
+  nw: { x: rect.x, y: rect.y },
+  n: { x: rect.x + rect.width / 2, y: rect.y },
+  ne: { x: rect.x + rect.width, y: rect.y },
+  e: { x: rect.x + rect.width, y: rect.y + rect.height / 2 },
+  se: { x: rect.x + rect.width, y: rect.y + rect.height },
+  s: { x: rect.x + rect.width / 2, y: rect.y + rect.height },
+  sw: { x: rect.x, y: rect.y + rect.height },
+  w: { x: rect.x, y: rect.y + rect.height / 2 },
+});
+
+const getHandleAt = (point: { x: number; y: number }, rect: RectShape): Handle | null => {
+  if (rect.width <= 0 || rect.height <= 0) return null;
+  const handles = handlePositions(rect);
+  for (const key of Object.keys(handles) as Handle[]) {
+    const h = handles[key];
+    if (Math.abs(point.x - h.x) <= HANDLE_HIT_RADIUS && Math.abs(point.y - h.y) <= HANDLE_HIT_RADIUS) {
+      return key;
+    }
+  }
+  return null;
+};
+
+const isInsideRect = (point: { x: number; y: number }, rect: RectShape): boolean =>
+  rect.width > 0 && rect.height > 0 &&
+  point.x >= rect.x && point.x <= rect.x + rect.width &&
+  point.y >= rect.y && point.y <= rect.y + rect.height;
+
+const resizeRect = (rect: RectShape, handle: Handle, dx: number, dy: number): RectShape => {
+  let { x, y, width, height } = rect;
+
+  if (handle.includes('w')) { x = rect.x + dx; width = rect.width - dx; }
+  if (handle.includes('e')) { width = rect.width + dx; }
+  if (handle.includes('n')) { y = rect.y + dy; height = rect.height - dy; }
+  if (handle.includes('s')) { height = rect.height + dy; }
+
+  if (width < 0) { x += width; width = Math.abs(width); }
+  if (height < 0) { y += height; height = Math.abs(height); }
+
+  return { x, y, width, height };
+};
+
 function App() {
   const [photoTemplates, setPhotoTemplates] = useState<PhotoTemplate[]>([]);
   const [currentMode, setCurrentMode] = useState<ViewMode>('list');
@@ -31,11 +95,12 @@ function App() {
   // New state for image upload and cropping
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
-  const [cropRect, setCropRect] = useState({ x: 0, y: 0, width: 0, height: 0 });
-  const [cropNumberRect, setCropNumberRect] = useState({ x: 0, y: 0, width: 0, height: 0 });
+  const [cropRect, setCropRect] = useState<RectShape>(DEFAULT_RECT);
+  const [cropNumberRect, setCropNumberRect] = useState(DEFAULT_NUMBER_RECT);
   const [currentCropMode, setCurrentCropMode] = useState<'photo' | 'number'>('photo');
+  const [zoomLevel, setZoomLevel] = useState(1);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [startPos, setStartPos] = useState({ x: 0, y: 0 });
+  const dragStateRef = useRef<{ kind: DragKind; startPoint: { x: number; y: number }; startRect: RectShape } | null>(null);
 
   // New state for generation process
   const [selectedTemplate, setSelectedTemplate] = useState<PhotoTemplate | null>(null);
@@ -263,9 +328,10 @@ function App() {
     setEditingTemplate(null);
     setMessage("");
     setUploadedImage(null);
-    setCropRect({ x: 0, y: 0, width: 0, height: 0 });
-    setCropNumberRect({ x: 0, y: 0, width: 0, height: 0 });
+    setCropRect(DEFAULT_RECT);
+    setCropNumberRect(DEFAULT_NUMBER_RECT);
     setCurrentCropMode('photo');
+    setZoomLevel(1);
   };
 
   const switchToCreateMode = () => {
@@ -296,18 +362,49 @@ function App() {
         }
       } catch (e) {
         // If parsing fails, reset crop rect
-        setCropRect({ x: 0, y: 0, width: 0, height: 0 });
+        setCropRect(DEFAULT_RECT);
       }
-      
-      // Parse existing crop coordinates for number
+
+      // Parse existing crop coordinates for number. Older templates may not have
+      // the color/fontScale fields yet, so default them in.
       try {
         if (template.crop_number) {
           const coords = JSON.parse(template.crop_number);
-          setCropNumberRect(coords);
+          setCropNumberRect({ ...DEFAULT_NUMBER_RECT, ...coords });
         }
       } catch (e) {
         // If parsing fails, reset crop number rect
-        setCropNumberRect({ x: 0, y: 0, width: 0, height: 0 });
+        setCropNumberRect(DEFAULT_NUMBER_RECT);
+      }
+    }
+  };
+
+  const duplicateTemplate = (template: PhotoTemplate) => {
+    setFormData({
+      name: `${template.name} (copie)`,
+      crop_photo: template.crop_photo,
+      crop_number: template.crop_number,
+      template_img: template.template_img
+    });
+    setEditingTemplate(null);
+    setCurrentMode('create');
+    setMessage("");
+    setZoomLevel(1);
+
+    if (template.template_img) {
+      setUploadedImage(`asset://localhost/${template.template_img}`);
+
+      try {
+        setCropRect(template.crop_photo ? JSON.parse(template.crop_photo) : DEFAULT_RECT);
+      } catch (e) {
+        setCropRect(DEFAULT_RECT);
+      }
+
+      try {
+        const coords = template.crop_number ? JSON.parse(template.crop_number) : {};
+        setCropNumberRect({ ...DEFAULT_NUMBER_RECT, ...coords });
+      } catch (e) {
+        setCropNumberRect(DEFAULT_NUMBER_RECT);
       }
     }
   };
@@ -425,61 +522,119 @@ function App() {
       });
       
       setFormData(prev => ({ ...prev, template_img: filePath }));
-      
-      // Create URL for display
+
+      // Create URL for display. The previous crop zones are kept on purpose: when
+      // replacing an image with a similar layout, the user can just nudge the
+      // existing zones (via drag handles) instead of redrawing from scratch.
       const imageUrl = URL.createObjectURL(file);
       setUploadedImage(imageUrl);
-      setCropRect({ x: 0, y: 0, width: 0, height: 0 });
     } catch (error) {
       setMessage(`Erreur lors de l'upload: ${error}`);
     }
   };
 
-  // Canvas drawing handlers
-  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const activeRect = currentCropMode === 'photo' ? cropRect : cropNumberRect;
+
+  const getCanvasPoint = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    
+    if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    
-    setIsDrawing(true);
-    setStartPos({ x, y });
-    
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY,
+    };
+  };
+
+  const setActiveRect = (next: RectShape) => {
     if (currentCropMode === 'photo') {
-      setCropRect({ x, y, width: 0, height: 0 });
+      setCropRect(next);
     } else {
-      setCropNumberRect({ x, y, width: 0, height: 0 });
+      setCropNumberRect(prev => ({ ...prev, ...next }));
     }
   };
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDrawing) return;
-    
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    
-    const newRect = {
-      x: Math.min(startPos.x, x),
-      y: Math.min(startPos.y, y),
-      width: Math.abs(x - startPos.x),
-      height: Math.abs(y - startPos.y)
-    };
-    
-    if (currentCropMode === 'photo') {
-      setCropRect(newRect);
+  const updateActiveRectField = (field: keyof RectShape, value: number) => {
+    if (Number.isNaN(value)) return;
+    setActiveRect({ ...activeRect, [field]: value });
+  };
+
+  const updateNumberColor = (color: string) => {
+    setCropNumberRect(prev => ({ ...prev, color }));
+  };
+
+  const updateNumberFontScale = (fontScale: number) => {
+    if (Number.isNaN(fontScale)) return;
+    setCropNumberRect(prev => ({ ...prev, fontScale }));
+  };
+
+  // Canvas drawing handlers: a mousedown either starts a brand new rectangle
+  // (click outside the current one), moves it (click inside), or resizes it
+  // (click on one of its 8 handles).
+  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const point = getCanvasPoint(e);
+    const handle = getHandleAt(point, activeRect);
+
+    let kind: DragKind;
+    if (handle) {
+      kind = { type: 'resize', handle };
+    } else if (isInsideRect(point, activeRect)) {
+      kind = { type: 'move' };
     } else {
-      setCropNumberRect(newRect);
+      kind = { type: 'new' };
+      setActiveRect({ x: point.x, y: point.y, width: 0, height: 0 });
     }
+
+    dragStateRef.current = { kind, startPoint: point, startRect: activeRect };
+    setIsDrawing(true);
+  };
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    const point = getCanvasPoint(e);
+
+    if (!isDrawing || !dragStateRef.current) {
+      // Not dragging: just give the user a hint of what a click would do.
+      if (canvas) {
+        const handle = getHandleAt(point, activeRect);
+        if (handle) {
+          canvas.style.cursor = CURSOR_BY_HANDLE[handle];
+        } else if (isInsideRect(point, activeRect)) {
+          canvas.style.cursor = 'move';
+        } else {
+          canvas.style.cursor = 'crosshair';
+        }
+      }
+      return;
+    }
+
+    const { kind, startPoint, startRect } = dragStateRef.current;
+    let nextRect: RectShape;
+
+    if (kind.type === 'new') {
+      nextRect = {
+        x: Math.min(startPoint.x, point.x),
+        y: Math.min(startPoint.y, point.y),
+        width: Math.abs(point.x - startPoint.x),
+        height: Math.abs(point.y - startPoint.y),
+      };
+    } else if (kind.type === 'move') {
+      nextRect = {
+        ...startRect,
+        x: startRect.x + (point.x - startPoint.x),
+        y: startRect.y + (point.y - startPoint.y),
+      };
+    } else {
+      nextRect = resizeRect(startRect, kind.handle, point.x - startPoint.x, point.y - startPoint.y);
+    }
+
+    setActiveRect(nextRect);
   };
 
   const handleMouseUp = () => {
     setIsDrawing(false);
+    dragStateRef.current = null;
     // Update the appropriate crop field with coordinates
     if (currentCropMode === 'photo') {
       setFormData(prev => ({
@@ -494,45 +649,55 @@ function App() {
     }
   };
 
-  // Draw crop rectangles on canvas
+  // Draw crop rectangles (and, for the active one, its resize handles) on canvas
   const drawCropRect = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    
+
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    
+
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
+
+    const drawHandles = (rect: RectShape, color: string) => {
+      if (rect.width <= 0 || rect.height <= 0) return;
+      ctx.fillStyle = color;
+      Object.values(handlePositions(rect)).forEach(({ x, y }) => {
+        ctx.fillRect(x - HANDLE_DRAW_SIZE / 2, y - HANDLE_DRAW_SIZE / 2, HANDLE_DRAW_SIZE, HANDLE_DRAW_SIZE);
+      });
+    };
+
     // Draw crop_photo rectangle (red)
     if (cropRect.width > 0 && cropRect.height > 0) {
       ctx.strokeStyle = '#ff0000';
       ctx.lineWidth = 2;
       ctx.strokeRect(cropRect.x, cropRect.y, cropRect.width, cropRect.height);
-      
-      // Add label for photo crop
+
       ctx.fillStyle = '#ff0000';
       ctx.font = '12px Arial';
       ctx.fillText('Photo', cropRect.x, cropRect.y - 5);
+
+      if (currentCropMode === 'photo') drawHandles(cropRect, '#ff0000');
     }
-    
+
     // Draw crop_number rectangle (blue)
     if (cropNumberRect.width > 0 && cropNumberRect.height > 0) {
       ctx.strokeStyle = '#0000ff';
       ctx.lineWidth = 2;
       ctx.strokeRect(cropNumberRect.x, cropNumberRect.y, cropNumberRect.width, cropNumberRect.height);
-      
-      // Add label for number crop
+
       ctx.fillStyle = '#0000ff';
       ctx.font = '12px Arial';
       ctx.fillText('Number', cropNumberRect.x, cropNumberRect.y - 5);
+
+      if (currentCropMode === 'number') drawHandles(cropNumberRect, '#0000ff');
     }
   };
 
   // Effect to redraw crop rectangles
   useEffect(() => {
     drawCropRect();
-  }, [cropRect, cropNumberRect]);
+  }, [cropRect, cropNumberRect, currentCropMode]);
 
   let content;
 
@@ -545,6 +710,7 @@ function App() {
         onGenerate={switchToGenerateMode}
         onHistory={switchToHistoryMode}
         onEdit={switchToEditMode}
+        onDuplicate={duplicateTemplate}
         onDelete={requestDelete}
       />
     );
@@ -634,6 +800,77 @@ function App() {
             </div>
 
             <div className="form-group">
+              <label>Ajustement précis (en pixels):</label>
+              <div className="coord-inputs">
+                <label>
+                  X
+                  <input
+                    type="number"
+                    value={Math.round(activeRect.x)}
+                    onChange={(e) => updateActiveRectField('x', Number(e.target.value))}
+                    disabled={isLoading}
+                  />
+                </label>
+                <label>
+                  Y
+                  <input
+                    type="number"
+                    value={Math.round(activeRect.y)}
+                    onChange={(e) => updateActiveRectField('y', Number(e.target.value))}
+                    disabled={isLoading}
+                  />
+                </label>
+                <label>
+                  Largeur
+                  <input
+                    type="number"
+                    value={Math.round(activeRect.width)}
+                    onChange={(e) => updateActiveRectField('width', Number(e.target.value))}
+                    disabled={isLoading}
+                  />
+                </label>
+                <label>
+                  Hauteur
+                  <input
+                    type="number"
+                    value={Math.round(activeRect.height)}
+                    onChange={(e) => updateActiveRectField('height', Number(e.target.value))}
+                    disabled={isLoading}
+                  />
+                </label>
+              </div>
+            </div>
+
+            {currentCropMode === 'number' && (
+              <div className="form-group">
+                <label>Apparence du numéro:</label>
+                <div className="number-style-controls">
+                  <label>
+                    Couleur
+                    <input
+                      type="color"
+                      value={cropNumberRect.color}
+                      onChange={(e) => updateNumberColor(e.target.value)}
+                      disabled={isLoading}
+                    />
+                  </label>
+                  <label>
+                    Taille ({Math.round(cropNumberRect.fontScale * 100)}%)
+                    <input
+                      type="range"
+                      min={0.5}
+                      max={2}
+                      step={0.1}
+                      value={cropNumberRect.fontScale}
+                      onChange={(e) => updateNumberFontScale(Number(e.target.value))}
+                      disabled={isLoading}
+                    />
+                  </label>
+                </div>
+              </div>
+            )}
+
+            <div className="form-group">
               <label htmlFor="template_img_upload">Image du template:</label>
               <input
                 id="template_img_upload"
@@ -647,11 +884,37 @@ function App() {
           </div>
 
           <div className="crop-preview-panel">
-            <h2 className="crop-panel-title">Définition des cadrages</h2>
+            <div className="crop-panel-header">
+              <h2 className="crop-panel-title">Définition des cadrages</h2>
+              <div className="zoom-controls">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setZoomLevel((z) => Math.max(MIN_ZOOM, +(z - ZOOM_STEP).toFixed(2)))}
+                  disabled={zoomLevel <= MIN_ZOOM}
+                >
+                  −
+                </button>
+                <span className="zoom-level">{Math.round(zoomLevel * 100)}%</span>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setZoomLevel((z) => Math.min(MAX_ZOOM, +(z + ZOOM_STEP).toFixed(2)))}
+                  disabled={zoomLevel >= MAX_ZOOM}
+                >
+                  +
+                </button>
+                {zoomLevel !== 1 && (
+                  <button type="button" className="btn btn-secondary" onClick={() => setZoomLevel(1)}>
+                    Réinitialiser
+                  </button>
+                )}
+              </div>
+            </div>
             {uploadedImage ? (
               <>
                 <div className="image-crop-container">
-                  <div className="crop-stage">
+                  <div className="crop-stage" style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'top left' }}>
                     <img
                       src={uploadedImage}
                       alt="Template"

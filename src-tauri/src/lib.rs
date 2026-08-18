@@ -35,6 +35,25 @@ struct CropCoordinates {
     y: f32,
     width: f32,
     height: f32,
+    /// Optional hex color ("#rrggbb") for the number text. Only meaningful for
+    /// the crop_number zone; defaults to black when absent or unparseable.
+    #[serde(default)]
+    color: Option<String>,
+    /// Optional multiplier applied to the auto-computed font size. Only
+    /// meaningful for the crop_number zone; defaults to 1.0 when absent.
+    #[serde(default, rename = "fontScale")]
+    font_scale: Option<f32>,
+}
+
+fn parse_hex_color(input: &str) -> Option<Rgba<u8>> {
+    let hex = input.trim().trim_start_matches('#');
+    if hex.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    Some(Rgba([r, g, b, 255]))
 }
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -580,9 +599,16 @@ fn add_text_overlay(
 
     let mut rgba_image = image.to_rgba8();
 
+    let color = txt_crop
+        .color
+        .as_deref()
+        .and_then(parse_hex_color)
+        .unwrap_or(Rgba([0u8, 0u8, 0u8, 255u8]));
+    let font_scale = txt_crop.font_scale.unwrap_or(1.0).max(0.1);
+
     // Start from a font size close to the crop height, then shrink it so the
     // text still fits the crop width.
-    let mut font_size = txt_crop.height.max(1.0) * 0.7;
+    let mut font_size = txt_crop.height.max(1.0) * 0.7 * font_scale;
     let mut scale = Scale::uniform(font_size);
     let mut text_width = text_size(scale, &font, &text).0 as f32;
 
@@ -600,7 +626,7 @@ fn add_text_overlay(
 
     draw_text_mut(
         &mut rgba_image,
-        Rgba([0u8, 0u8, 0u8, 255u8]),
+        color,
         text_x,
         text_y,
         scale,
@@ -938,6 +964,8 @@ mod tests {
             y: 0.0,
             width: 10.0,
             height: 10.0,
+            color: None,
+            font_scale: None,
         };
         let result = composite_images(&template, &source, &crop).unwrap();
         let rgb = result.to_rgb8();
@@ -959,6 +987,8 @@ mod tests {
             y: 10.0,
             width: 80.0,
             height: 30.0,
+            color: None,
+            font_scale: None,
         };
 
         let result = add_text_overlay(template, &crop, "42").unwrap();
@@ -976,6 +1006,45 @@ mod tests {
         }
 
         assert!(has_ink, "expected the number text to draw at least one visible pixel in the crop area");
+    }
+
+    #[test]
+    fn parse_hex_color_accepts_valid_hex_and_rejects_invalid() {
+        assert_eq!(parse_hex_color("#ff0000"), Some(Rgba([255, 0, 0, 255])));
+        assert_eq!(parse_hex_color("00ff00"), Some(Rgba([0, 255, 0, 255])));
+        assert_eq!(parse_hex_color("not-a-color"), None);
+        assert_eq!(parse_hex_color("#fff"), None);
+    }
+
+    #[test]
+    fn add_text_overlay_uses_custom_color_and_font_scale() {
+        let template = DynamicImage::new_rgba8(200, 100);
+        let crop = CropCoordinates {
+            x: 10.0,
+            y: 10.0,
+            width: 80.0,
+            height: 30.0,
+            color: Some("#00ff00".to_string()),
+            font_scale: Some(1.5),
+        };
+
+        let result = add_text_overlay(template, &crop, "7").unwrap();
+        let rgba = result.to_rgba8();
+
+        // Some pixel in the crop area should carry the custom green color
+        // (allowing for anti-aliasing, only the green channel is checked to
+        // be dominant on at least one fully-opaque pixel).
+        let mut found_green = false;
+        for y in (crop.y as u32)..((crop.y + crop.height) as u32) {
+            for x in (crop.x as u32)..((crop.x + crop.width) as u32) {
+                let pixel = rgba.get_pixel(x, y);
+                if pixel[3] == 255 && pixel[1] > pixel[0] && pixel[1] > pixel[2] {
+                    found_green = true;
+                }
+            }
+        }
+
+        assert!(found_green, "expected the custom green color to appear in the rendered text");
     }
 
     // --- Archive creation ---

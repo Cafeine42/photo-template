@@ -7,12 +7,15 @@ numéro dans le template.
 
 ## 1. Liste des templates (`TemplateListView`)
 
-Écran d'accueil. Affiche tous les `PhotoTemplate` enregistrés en base (nom, zone
-numéro, chemin de l'image template) avec, pour chacun :
+Écran d'accueil. Affiche tous les `PhotoTemplate` enregistrés en base sous forme de
+cartes avec **vignette** (aperçu de l'image du template), avec pour chacune :
 - **Modifier** → bascule vers le formulaire d'édition.
-- **Supprimer** → demande confirmation (`confirm()`), puis suppression en base.
+- **Dupliquer** → crée un nouveau template pré-rempli avec le même nom (+ "(copie)"),
+  la même image et les mêmes zones de recadrage, sans passer par le dessin manuel.
+- **Supprimer** → demande confirmation nommée (`ConfirmDialog`), puis suppression en base.
 
-Deux actions globales : **Créer un nouveau Photo Template** et **Générer des images**.
+Actions globales : **Créer un nouveau Photo Template**, **Générer des images**,
+**Historique**.
 
 ## 2. Création / édition d'un template (formulaire dans `App.tsx`)
 
@@ -21,21 +24,33 @@ Deux actions globales : **Créer un nouveau Photo Template** et **Générer des 
    - le fichier est envoyé en octets à la commande Rust `save_template_image`,
    - qui l'écrit sur disque dans `<app_data_dir>/template_images/<timestamp>_<nom>.<ext>`
      et renvoie le chemin absolu, stocké dans `formData.template_img`.
-3. L'image s'affiche dans un `<canvas>` superposé, sur lequel l'utilisateur **dessine
-   deux rectangles** au clic-glisser :
+   - Remplacer l'image d'un template existant par une autre **conserve** les zones de
+     recadrage déjà définies (elles ne sont plus réinitialisées) — pratique si la
+     nouvelle image a une mise en page similaire ; sinon l'utilisateur les réajuste
+     avec les poignées (voir ci-dessous).
+3. L'image s'affiche dans un `<canvas>` superposé, sur lequel l'utilisateur **dessine,
+   déplace et redimensionne deux zones** :
    - **Zone Photo (rouge)** — zone où sera incrustée la photo source (`crop_photo`).
    - **Zone Numéro (bleu)** — zone où sera écrit le numéro extrait du nom de fichier
-     (`crop_number`).
-   - Un bouton bascule le mode de dessin courant (`currentCropMode`).
-4. À la soumission, les deux zones (sous forme `{x, y, width, height}`) sont
-   sérialisées en JSON et envoyées à :
+     (`crop_number`), avec une **couleur** et une **taille de police** personnalisables.
+   - Un bouton bascule le mode d'édition courant (`currentCropMode`) entre les deux zones.
+   - Cliquer en dehors de la zone active en dessine une nouvelle ; cliquer à l'intérieur
+     la déplace ; cliquer sur une des 8 poignées (coins/milieux de bord) la redimensionne.
+   - Des **champs numériques** (x, y, largeur, hauteur) permettent un ajustement au
+     pixel près, en complément du dessin à la souris.
+   - Un contrôle de **zoom** (100–300%) facilite le travail de précision sur les
+     templates en haute résolution.
+4. À la soumission, les deux zones (sous forme `{x, y, width, height}`, plus `color` et
+   `fontScale` pour la zone numéro) sont sérialisées en JSON et envoyées à :
    - `add_photo_template` (création) ou
    - `update_photo_template` (édition, avec l'`id` existant).
 5. Validation côté frontend : nom + image obligatoires, les deux zones doivent avoir
    une largeur/hauteur non nulle avant de pouvoir soumettre.
 
-En édition, l'image existante est ré-affichée via le protocole `asset://localhost/...`
-et les coordonnées JSON existantes sont re-parsées pour ré-afficher les rectangles.
+En édition (ou duplication), l'image existante est ré-affichée via le protocole
+`asset://localhost/...` et les coordonnées JSON existantes sont re-parsées pour
+ré-afficher les zones ; les templates créés avant l'ajout de `color`/`fontScale`
+reçoivent des valeurs par défaut (noir, 100%).
 
 ## 3. Génération d'images (`TemplateGenerationView`)
 
@@ -91,7 +106,7 @@ un bouton pour rouvrir le dossier de résultat correspondant.
 | `id`            | int    | clé primaire auto-incrémentée                              |
 | `name`          | text   | nom du template                                            |
 | `crop_photo`    | text   | JSON `{x,y,width,height}` — zone d'incrustation de la photo |
-| `crop_number`   | text   | JSON `{x,y,width,height}` — zone d'affichage du numéro      |
+| `crop_number`   | text   | JSON `{x,y,width,height,color?,fontScale?}` — zone d'affichage du numéro (couleur hex et multiplicateur de taille de police, optionnels) |
 | `template_img`  | text   | chemin absolu du fichier image du template sur le disque    |
 
 `GenerationHistoryEntry` (table SQLite `generation_history`) :
