@@ -32,6 +32,29 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+fn add_photo_template_impl(
+    connection: &mut SqliteConnection,
+    new_template: NewPhotoTemplate,
+) -> Result<PhotoTemplate, String> {
+    // Insert the new template
+    diesel::insert_into(photo_templates::table)
+        .values(&new_template)
+        .execute(connection)
+        .map_err(|e| format!("Error inserting photo template: {}", e))?;
+
+    // Get the last inserted record
+    use diesel::sql_types::Integer;
+    let last_insert_id: i32 = diesel::select(diesel::dsl::sql::<Integer>("last_insert_rowid()"))
+        .get_result(connection)
+        .map_err(|e| format!("Error getting last insert ID: {}", e))?;
+
+    // Fetch and return the inserted record
+    photo_templates::table
+        .find(last_insert_id)
+        .first(connection)
+        .map_err(|e| format!("Error fetching inserted photo template: {}", e))
+}
+
 #[tauri::command]
 fn add_photo_template(
     name: String,
@@ -40,40 +63,52 @@ fn add_photo_template(
     template_img: String,
 ) -> Result<PhotoTemplate, String> {
     let mut connection = establish_connection();
-    
-    let new_template = NewPhotoTemplate {
-        name,
-        crop_photo,
-        crop_number,
-        template_img,
-    };
-    
-    // Insert the new template
-    diesel::insert_into(photo_templates::table)
-        .values(&new_template)
-        .execute(&mut connection)
-        .map_err(|e| format!("Error inserting photo template: {}", e))?;
-    
-    // Get the last inserted record
-    use diesel::sql_types::Integer;
-    let last_insert_id: i32 = diesel::select(diesel::dsl::sql::<Integer>("last_insert_rowid()"))
-        .get_result(&mut connection)
-        .map_err(|e| format!("Error getting last insert ID: {}", e))?;
-    
-    // Fetch and return the inserted record
+    add_photo_template_impl(
+        &mut connection,
+        NewPhotoTemplate {
+            name,
+            crop_photo,
+            crop_number,
+            template_img,
+        },
+    )
+}
+
+fn get_photo_templates_impl(connection: &mut SqliteConnection) -> Result<Vec<PhotoTemplate>, String> {
     photo_templates::table
-        .find(last_insert_id)
-        .first(&mut connection)
-        .map_err(|e| format!("Error fetching inserted photo template: {}", e))
+        .load::<PhotoTemplate>(connection)
+        .map_err(|e| format!("Error loading photo templates: {}", e))
 }
 
 #[tauri::command]
 fn get_photo_templates() -> Result<Vec<PhotoTemplate>, String> {
     let mut connection = establish_connection();
-    
+    get_photo_templates_impl(&mut connection)
+}
+
+fn update_photo_template_impl(
+    connection: &mut SqliteConnection,
+    id: i32,
+    name: String,
+    crop_photo: String,
+    crop_number: String,
+    template_img: String,
+) -> Result<PhotoTemplate, String> {
+    diesel::update(photo_templates::table.find(id))
+        .set((
+            photo_templates::name.eq(name),
+            photo_templates::crop_photo.eq(crop_photo),
+            photo_templates::crop_number.eq(crop_number),
+            photo_templates::template_img.eq(template_img),
+        ))
+        .execute(connection)
+        .map_err(|e| format!("Error updating photo template: {}", e))?;
+
+    // Return the updated record
     photo_templates::table
-        .load::<PhotoTemplate>(&mut connection)
-        .map_err(|e| format!("Error loading photo templates: {}", e))
+        .find(id)
+        .first(connection)
+        .map_err(|e| format!("Error fetching updated photo template: {}", e))
 }
 
 #[tauri::command]
@@ -85,37 +120,25 @@ fn update_photo_template(
     template_img: String,
 ) -> Result<PhotoTemplate, String> {
     let mut connection = establish_connection();
-    
-    diesel::update(photo_templates::table.find(id))
-        .set((
-            photo_templates::name.eq(name),
-            photo_templates::crop_photo.eq(crop_photo),
-            photo_templates::crop_number.eq(crop_number),
-            photo_templates::template_img.eq(template_img),
-        ))
-        .execute(&mut connection)
-        .map_err(|e| format!("Error updating photo template: {}", e))?;
-    
-    // Return the updated record
-    photo_templates::table
-        .find(id)
-        .first(&mut connection)
-        .map_err(|e| format!("Error fetching updated photo template: {}", e))
+    update_photo_template_impl(&mut connection, id, name, crop_photo, crop_number, template_img)
 }
 
-#[tauri::command]
-fn delete_photo_template(id: i32) -> Result<String, String> {
-    let mut connection = establish_connection();
-    
+fn delete_photo_template_impl(connection: &mut SqliteConnection, id: i32) -> Result<String, String> {
     let deleted_count = diesel::delete(photo_templates::table.find(id))
-        .execute(&mut connection)
+        .execute(connection)
         .map_err(|e| format!("Error deleting photo template: {}", e))?;
-    
+
     if deleted_count > 0 {
         Ok(format!("Photo template with ID {} deleted successfully", id))
     } else {
         Err("Photo template not found".to_string())
     }
+}
+
+#[tauri::command]
+fn delete_photo_template(id: i32) -> Result<String, String> {
+    let mut connection = establish_connection();
+    delete_photo_template_impl(&mut connection, id)
 }
 
 #[tauri::command]
@@ -512,4 +535,180 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    fn test_connection() -> SqliteConnection {
+        let mut connection = SqliteConnection::establish(":memory:")
+            .expect("failed to open in-memory sqlite database");
+        connection
+            .run_pending_migrations(MIGRATIONS)
+            .expect("failed to run migrations");
+        connection
+    }
+
+    fn sample_new_template(name: &str) -> NewPhotoTemplate {
+        NewPhotoTemplate {
+            name: name.to_string(),
+            crop_photo: r#"{"x":0.0,"y":0.0,"width":10.0,"height":10.0}"#.to_string(),
+            crop_number: r#"{"x":0.0,"y":0.0,"width":5.0,"height":5.0}"#.to_string(),
+            template_img: "template.png".to_string(),
+        }
+    }
+
+    // --- CRUD (Diesel, in-memory sqlite) ---
+
+    #[test]
+    fn add_and_get_photo_template() {
+        let mut connection = test_connection();
+        let created = add_photo_template_impl(&mut connection, sample_new_template("Test")).unwrap();
+        assert_eq!(created.name, "Test");
+
+        let all = get_photo_templates_impl(&mut connection).unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, created.id);
+    }
+
+    #[test]
+    fn update_photo_template_changes_fields() {
+        let mut connection = test_connection();
+        let created = add_photo_template_impl(&mut connection, sample_new_template("Original")).unwrap();
+
+        let updated = update_photo_template_impl(
+            &mut connection,
+            created.id,
+            "Renamed".to_string(),
+            created.crop_photo.clone(),
+            created.crop_number.clone(),
+            created.template_img.clone(),
+        )
+        .unwrap();
+
+        assert_eq!(updated.name, "Renamed");
+        assert_eq!(updated.id, created.id);
+    }
+
+    #[test]
+    fn delete_photo_template_removes_row() {
+        let mut connection = test_connection();
+        let created = add_photo_template_impl(&mut connection, sample_new_template("ToDelete")).unwrap();
+
+        let message = delete_photo_template_impl(&mut connection, created.id).unwrap();
+        assert!(message.contains("deleted successfully"));
+
+        let all = get_photo_templates_impl(&mut connection).unwrap();
+        assert!(all.is_empty());
+    }
+
+    #[test]
+    fn delete_photo_template_missing_id_errors() {
+        let mut connection = test_connection();
+        let result = delete_photo_template_impl(&mut connection, 999);
+        assert!(result.is_err());
+    }
+
+    // --- Number extraction ---
+
+    #[test]
+    fn extract_number_from_filename_finds_first_number() {
+        assert_eq!(extract_number_from_filename("photo_042_final", 1), "042");
+        assert_eq!(extract_number_from_filename("a1b2c3", 1), "1");
+    }
+
+    #[test]
+    fn extract_number_from_filename_falls_back_without_digits() {
+        assert_eq!(extract_number_from_filename("no-digits-here", 7), "7");
+    }
+
+    // --- Image folder discovery ---
+
+    #[test]
+    fn find_image_files_filters_by_extension_and_depth() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("a.jpg"), b"fake").unwrap();
+        fs::write(dir.path().join("b.PNG"), b"fake").unwrap();
+        fs::write(dir.path().join("c.txt"), b"fake").unwrap();
+        let nested = dir.path().join("nested");
+        fs::create_dir(&nested).unwrap();
+        fs::write(nested.join("d.jpg"), b"fake").unwrap();
+
+        let files = find_image_files(dir.path().to_str().unwrap()).unwrap();
+        let names: Vec<String> = files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+
+        assert_eq!(names, vec!["a.jpg".to_string(), "b.PNG".to_string()]);
+    }
+
+    // --- Image resizing ---
+
+    #[test]
+    fn load_and_resize_image_preserves_aspect_ratio() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("source.png");
+        let img = DynamicImage::new_rgba8(100, 50);
+        img.save(&path).unwrap();
+
+        let resized = load_and_resize_image(&path, 50, 50, true).unwrap();
+        assert_eq!(resized.width(), 50);
+        assert_eq!(resized.height(), 25);
+    }
+
+    // --- Compositing ---
+
+    #[test]
+    fn composite_images_centers_smaller_source_in_crop_area() {
+        let mut template = DynamicImage::new_rgb8(20, 20);
+        for pixel in template.as_mut_rgb8().unwrap().pixels_mut() {
+            *pixel = image::Rgb([255, 255, 255]);
+        }
+
+        let mut source = DynamicImage::new_rgb8(4, 4);
+        for pixel in source.as_mut_rgb8().unwrap().pixels_mut() {
+            *pixel = image::Rgb([0, 0, 0]);
+        }
+
+        let crop = CropCoordinates {
+            x: 0.0,
+            y: 0.0,
+            width: 10.0,
+            height: 10.0,
+        };
+        let result = composite_images(&template, &source, &crop).unwrap();
+        let rgb = result.to_rgb8();
+
+        // 4x4 source centered in the 10x10 crop area => offset (3,3), spans [3,7)
+        assert_eq!(rgb.get_pixel(3, 3), &image::Rgb([0, 0, 0]));
+        assert_eq!(rgb.get_pixel(6, 6), &image::Rgb([0, 0, 0]));
+        // Outside the source but inside the template, original color remains
+        assert_eq!(rgb.get_pixel(0, 0), &image::Rgb([255, 255, 255]));
+    }
+
+    // --- Archive creation ---
+
+    #[test]
+    fn create_archive_bundles_all_files() {
+        let dir = tempdir().unwrap();
+        let file1 = dir.path().join("one.jpg");
+        let file2 = dir.path().join("two.jpg");
+        fs::write(&file1, b"one-data").unwrap();
+        fs::write(&file2, b"two-data").unwrap();
+
+        let archive_path = create_archive(vec![file1, file2], dir.path()).unwrap();
+        let archive_file = fs::File::open(&archive_path).unwrap();
+        let mut zip = zip::ZipArchive::new(archive_file).unwrap();
+
+        let mut names: Vec<String> = (0..zip.len())
+            .map(|i| zip.by_index(i).unwrap().name().to_string())
+            .collect();
+        names.sort();
+
+        assert_eq!(names, vec!["one.jpg".to_string(), "two.jpg".to_string()]);
+    }
 }
