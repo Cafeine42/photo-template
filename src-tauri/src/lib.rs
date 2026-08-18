@@ -313,7 +313,7 @@ fn preview_generation_image(
         .first()
         .ok_or_else(|| "No image files found in the selected folder".to_string())?;
 
-    let source_image = load_and_resize_image_cover(
+    let source_image = load_and_resize_image_fit(
         first_image,
         crop_coords.width as u32,
         crop_coords.height as u32,
@@ -427,7 +427,7 @@ async fn generate_images_with_template(
         }
 
         // Load and resize source image
-        let source_image = load_and_resize_image_cover(
+        let source_image = load_and_resize_image_fit(
             image_file,
             crop_coords.width as u32,
             crop_coords.height as u32,
@@ -591,13 +591,16 @@ fn count_images_in_subfolders(folder_path: &str) -> Result<usize, String> {
     Ok(count)
 }
 
-/// Loads `source_path` and returns an image that exactly fills a
-/// `target_width` x `target_height` box: scaled (preserving aspect ratio, no
-/// distortion) to fully cover the box, then center-cropped so it never
-/// exceeds it. This also keeps the in-memory image close to the crop's final
-/// size instead of the source's native resolution, which is what actually
-/// speeds up compositing on large camera photos.
-fn load_and_resize_image_cover(
+/// Loads `source_path` and scales it (preserving aspect ratio, no
+/// distortion) to fill a `target_width` x `target_height` box as much as
+/// possible without exceeding it in either dimension — i.e. the whole photo
+/// stays visible, never cropped. `composite_images` then centers the result
+/// within the crop area, padding the shorter dimension if the photo's aspect
+/// ratio doesn't exactly match the crop's. This also keeps the in-memory
+/// image close to the crop's final size instead of the source's native
+/// resolution, which is what actually speeds up compositing on large camera
+/// photos.
+fn load_and_resize_image_fit(
     source_path: &Path,
     target_width: u32,
     target_height: u32,
@@ -610,24 +613,14 @@ fn load_and_resize_image_cover(
         return Ok(img);
     }
 
-    // Scale so the image fully covers the target box (may overflow one
-    // dimension), preserving aspect ratio.
     let width_ratio = target_width as f32 / orig_width as f32;
     let height_ratio = target_height as f32 / orig_height as f32;
-    let scale_ratio = width_ratio.max(height_ratio);
+    let scale_ratio = width_ratio.min(height_ratio);
 
-    let scaled_width = ((orig_width as f32 * scale_ratio).round() as u32).max(1);
-    let scaled_height = ((orig_height as f32 * scale_ratio).round() as u32).max(1);
+    let new_width = ((orig_width as f32 * scale_ratio).round() as u32).max(1);
+    let new_height = ((orig_height as f32 * scale_ratio).round() as u32).max(1);
 
-    let resized = img.resize_exact(scaled_width, scaled_height, image::imageops::FilterType::Lanczos3);
-
-    // Crop away the centered overflow so the result matches the box exactly.
-    let crop_x = scaled_width.saturating_sub(target_width) / 2;
-    let crop_y = scaled_height.saturating_sub(target_height) / 2;
-    let crop_width = target_width.min(scaled_width);
-    let crop_height = target_height.min(scaled_height);
-
-    Ok(resized.crop_imm(crop_x, crop_y, crop_width, crop_height))
+    Ok(img.resize_exact(new_width, new_height, image::imageops::FilterType::Lanczos3))
 }
 
 fn extract_number_from_filename(filename: &str, fallback_id: usize) -> String {
@@ -1044,29 +1037,32 @@ mod tests {
     // --- Image resizing ---
 
     #[test]
-    fn load_and_resize_image_cover_fills_target_without_distortion() {
+    fn load_and_resize_image_fit_preserves_aspect_ratio_without_cropping() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("source.png");
-        let mut img = DynamicImage::new_rgb8(100, 50);
-        {
-            let rgb = img.as_mut_rgb8().unwrap();
-            for (x, _y, pixel) in rgb.enumerate_pixels_mut() {
-                *pixel = if x < 50 { image::Rgb([255, 0, 0]) } else { image::Rgb([0, 0, 255]) };
-            }
-        }
+        let img = DynamicImage::new_rgba8(100, 50);
         img.save(&path).unwrap();
 
-        // Target is narrower (in aspect ratio terms) than the source, so covering
-        // it means scaling to match the target height and cropping the sides.
-        let covered = load_and_resize_image_cover(&path, 50, 50).unwrap();
-        assert_eq!(covered.width(), 50);
-        assert_eq!(covered.height(), 50);
+        // Target is narrower (in aspect ratio terms) than the source, so fitting
+        // it means scaling down to match the target width, staying under the
+        // target height rather than cropping to fill it.
+        let fitted = load_and_resize_image_fit(&path, 50, 50).unwrap();
+        assert_eq!(fitted.width(), 50);
+        assert_eq!(fitted.height(), 25);
+    }
 
-        let rgb = covered.to_rgb8();
-        // Center-cropped: the left part of the result is still red, the right blue —
-        // i.e. it fills the box without stretching either color region.
-        assert_eq!(rgb.get_pixel(0, 25), &image::Rgb([255, 0, 0]));
-        assert_eq!(rgb.get_pixel(49, 25), &image::Rgb([0, 0, 255]));
+    #[test]
+    fn load_and_resize_image_fit_upscales_small_source_to_fill_as_much_as_possible() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("source.png");
+        let img = DynamicImage::new_rgba8(20, 10);
+        img.save(&path).unwrap();
+
+        // Source is smaller than the target box: it should be scaled up (not left
+        // tiny) as far as possible without exceeding the box in either dimension.
+        let fitted = load_and_resize_image_fit(&path, 100, 100).unwrap();
+        assert_eq!(fitted.width(), 100);
+        assert_eq!(fitted.height(), 50);
     }
 
     // --- Compositing ---
