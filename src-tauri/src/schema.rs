@@ -9,3 +9,13 @@ diesel::table! {
         template_img -> Text,
     }
 }
+
+diesel::table! {
+    generation_history (id) {
+        id -> Integer,
+        template_name -> Text,
+        archive_path -> Text,
+        image_count -> Integer,
+        created_at -> Text,
+    }
+}

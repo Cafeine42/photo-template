@@ -4,6 +4,7 @@ type TemplateListViewProps = {
   photoTemplates: PhotoTemplate[];
   onCreate: () => void;
   onGenerate: () => void;
+  onHistory: () => void;
   onEdit: (template: PhotoTemplate) => void;
   onDelete: (template: PhotoTemplate) => void;
 };
@@ -12,6 +13,7 @@ const TemplateListView = ({
   photoTemplates,
   onCreate,
   onGenerate,
+  onHistory,
   onEdit,
   onDelete,
 }: TemplateListViewProps) => {
@@ -25,6 +27,9 @@ const TemplateListView = ({
           </button>
           <button onClick={onGenerate} className="btn btn-success">
             Générer des images
+          </button>
+          <button onClick={onHistory} className="btn btn-secondary">
+            Historique
           </button>
         </div>
       </div>

@@ -4,13 +4,16 @@ import { listen } from "@tauri-apps/api/event";
 import TemplateListView from "./components/TemplateListView";
 import { PhotoTemplate } from "./types/photoTemplate";
 import TemplateGenerationView from "./components/TemplateGenerationView";
+import HistoryView from "./components/HistoryView";
 import Toast from "./components/Toast";
 import ConfirmDialog from "./components/ConfirmDialog";
+import { GenerationHistoryEntry, GenerationPreparation } from "./types/generation";
 import "./App.css";
 
-type ViewMode = 'list' | 'create' | 'edit' | 'generate';
+type ViewMode = 'list' | 'create' | 'edit' | 'generate' | 'history';
 
 const LAST_IMAGE_FOLDER_KEY = "photo-template:lastImageFolder";
+const LAST_OUTPUT_FOLDER_KEY = "photo-template:lastOutputFolder";
 
 function App() {
   const [photoTemplates, setPhotoTemplates] = useState<PhotoTemplate[]>([]);
@@ -39,9 +42,21 @@ function App() {
   const [selectedImageFolder, setSelectedImageFolder] = useState<string>(
     () => localStorage.getItem(LAST_IMAGE_FOLDER_KEY) || ""
   );
+  const [selectedOutputFolder, setSelectedOutputFolder] = useState<string>(
+    () => localStorage.getItem(LAST_OUTPUT_FOLDER_KEY) || ""
+  );
   const [generationProgress, setGenerationProgress] = useState<number>(0);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [archivePath, setArchivePath] = useState<string>("");
+
+  // Aperçu et vérification des numéros avant génération
+  const [preparation, setPreparation] = useState<GenerationPreparation | null>(null);
+  const [numberOverrides, setNumberOverrides] = useState<Record<string, string>>({});
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [isPreviewLoading, setIsPreviewLoading] = useState<boolean>(false);
+
+  // Historique des générations
+  const [historyEntries, setHistoryEntries] = useState<GenerationHistoryEntry[]>([]);
 
   // Confirmation de suppression
   const [pendingDelete, setPendingDelete] = useState<PhotoTemplate | null>(null);
@@ -54,6 +69,38 @@ function App() {
       localStorage.setItem(LAST_IMAGE_FOLDER_KEY, folderPath);
     } catch (error) {
       setMessage(`Erreur lors de la sélection du dossier: ${error}`);
+    }
+  };
+
+  const selectOutputFolder = async () => {
+    try {
+      const folderPath = await invoke<string>("select_output_folder");
+      setSelectedOutputFolder(folderPath);
+      localStorage.setItem(LAST_OUTPUT_FOLDER_KEY, folderPath);
+    } catch (error) {
+      setMessage(`Erreur lors de la sélection du dossier de sortie: ${error}`);
+    }
+  };
+
+  const updateNumberOverride = (key: string, value: string) => {
+    setNumberOverrides(prev => ({ ...prev, [key]: value }));
+  };
+
+  const generatePreview = async () => {
+    if (!selectedTemplate || !selectedImageFolder) return;
+
+    setIsPreviewLoading(true);
+    try {
+      const dataUrl = await invoke<string>("preview_generation_image", {
+        templateId: selectedTemplate.id,
+        imageFolderPath: selectedImageFolder,
+        numberOverrides,
+      });
+      setPreviewImage(dataUrl);
+    } catch (error) {
+      setMessage(`Erreur lors de la génération de l'aperçu: ${error}`);
+    } finally {
+      setIsPreviewLoading(false);
     }
   };
 
@@ -70,19 +117,46 @@ function App() {
     setIsGenerating(true);
     setGenerationProgress(0);
     setMessage("");
-    
+
     try {
       const archivePath = await invoke<string>("generate_images_with_template", {
         templateId: selectedTemplate.id,
         imageFolderPath: selectedImageFolder,
+        outputFolderPath: selectedOutputFolder || null,
+        numberOverrides,
       });
-      
+
       setArchivePath(archivePath);
       setMessage("Génération terminée avec succès!");
     } catch (error) {
       setMessage(`Erreur lors de la génération: ${error}`);
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const cancelGeneration = async () => {
+    try {
+      await invoke("cancel_generation");
+    } catch (error) {
+      setMessage(`Erreur lors de l'annulation: ${error}`);
+    }
+  };
+
+  const loadGenerationHistory = async () => {
+    try {
+      const entries = await invoke<GenerationHistoryEntry[]>("get_generation_history");
+      setHistoryEntries(entries);
+    } catch (error) {
+      setMessage(`Erreur lors du chargement de l'historique: ${error}`);
+    }
+  };
+
+  const openArchiveFolder = async (archivePathToOpen: string) => {
+    try {
+      await invoke("download_archive", { archivePath: archivePathToOpen });
+    } catch (error) {
+      setMessage(`Erreur lors de l'ouverture de l'archive: ${error}`);
     }
   };
 
@@ -105,6 +179,37 @@ function App() {
       loadPhotoTemplates();
     }
   }, [currentMode]);
+
+  useEffect(() => {
+    if (currentMode === 'history') {
+      loadGenerationHistory();
+    }
+  }, [currentMode]);
+
+  // Analyse le dossier source (fichiers trouvés + numéros détectés) dès qu'il change,
+  // pour permettre une vérification/correction avant de lancer la génération.
+  useEffect(() => {
+    if (currentMode !== 'generate' || !selectedImageFolder) {
+      setPreparation(null);
+      return;
+    }
+
+    let cancelled = false;
+    setNumberOverrides({});
+    setPreviewImage(null);
+
+    invoke<GenerationPreparation>("prepare_generation", { imageFolderPath: selectedImageFolder })
+      .then((result) => {
+        if (!cancelled) setPreparation(result);
+      })
+      .catch((error) => {
+        if (!cancelled) setMessage(`Erreur lors de l'analyse du dossier: ${error}`);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentMode, selectedImageFolder]);
 
   // Set up event listeners for progress updates
   useEffect(() => {
@@ -213,7 +318,15 @@ function App() {
   };
 
   const switchToGenerateMode = () => {
+    setArchivePath("");
+    setGenerationProgress(0);
+    setPreviewImage(null);
+    setNumberOverrides({});
     setCurrentMode('generate');
+  };
+
+  const switchToHistoryMode = () => {
+    setCurrentMode('history');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -430,8 +543,18 @@ function App() {
         photoTemplates={photoTemplates}
         onCreate={switchToCreateMode}
         onGenerate={switchToGenerateMode}
+        onHistory={switchToHistoryMode}
         onEdit={switchToEditMode}
         onDelete={requestDelete}
+      />
+    );
+  } else if (currentMode === 'history') {
+    // History View
+    content = (
+      <HistoryView
+        entries={historyEntries}
+        onOpenArchive={openArchiveFolder}
+        onBack={switchToListMode}
       />
     );
   } else if (currentMode === 'generate') {
@@ -443,7 +566,16 @@ function App() {
         onSelectTemplate={(template) => setSelectedTemplate(template)}
         selectedImageFolder={selectedImageFolder}
         onSelectFolder={selectImageFolder}
+        selectedOutputFolder={selectedOutputFolder}
+        onSelectOutputFolder={selectOutputFolder}
+        preparation={preparation}
+        numberOverrides={numberOverrides}
+        onNumberOverrideChange={updateNumberOverride}
+        previewImage={previewImage}
+        isPreviewLoading={isPreviewLoading}
+        onGeneratePreview={generatePreview}
         onGenerate={generateImages}
+        onCancelGeneration={cancelGeneration}
         generationProgress={generationProgress}
         isGenerating={isGenerating}
         archivePath={archivePath}

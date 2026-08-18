@@ -1,5 +1,6 @@
 import type { ChangeEvent } from "react";
 import type { PhotoTemplate } from "../types/photoTemplate.ts";
+import type { GenerationPreparation } from "../types/generation";
 
 interface TemplateGenerationViewProps {
   photoTemplates: PhotoTemplate[];
@@ -7,7 +8,16 @@ interface TemplateGenerationViewProps {
   onSelectTemplate: (template: PhotoTemplate | null) => void;
   selectedImageFolder: string;
   onSelectFolder: () => void;
+  selectedOutputFolder: string;
+  onSelectOutputFolder: () => void;
+  preparation: GenerationPreparation | null;
+  numberOverrides: Record<string, string>;
+  onNumberOverrideChange: (key: string, value: string) => void;
+  previewImage: string | null;
+  isPreviewLoading: boolean;
+  onGeneratePreview: () => void;
   onGenerate: () => void;
+  onCancelGeneration: () => void;
   generationProgress: number;
   isGenerating: boolean;
   archivePath: string;
@@ -21,7 +31,16 @@ const TemplateGenerationView = ({
   onSelectTemplate,
   selectedImageFolder,
   onSelectFolder,
+  selectedOutputFolder,
+  onSelectOutputFolder,
+  preparation,
+  numberOverrides,
+  onNumberOverrideChange,
+  previewImage,
+  isPreviewLoading,
+  onGeneratePreview,
   onGenerate,
+  onCancelGeneration,
   generationProgress,
   isGenerating,
   archivePath,
@@ -88,6 +107,82 @@ const TemplateGenerationView = ({
           </div>
         </div>
 
+        <div className="form-group">
+          <label htmlFor="output-folder-path">Dossier de sortie (optionnel):</label>
+          <div className="folder-selection">
+            <input
+              id="output-folder-path"
+              type="text"
+              value={selectedOutputFolder}
+              placeholder="Dossier par défaut de l'application"
+              readOnly
+              disabled={isGenerating}
+            />
+            <button
+              type="button"
+              onClick={onSelectOutputFolder}
+              className="btn btn-secondary"
+              disabled={isGenerating}
+            >
+              Parcourir
+            </button>
+          </div>
+        </div>
+
+        {preparation && (
+          <div className="form-group">
+            {preparation.skipped_subfolder_image_count > 0 && (
+              <p className="warning-message">
+                ⚠️ {preparation.skipped_subfolder_image_count} image(s) situées dans des
+                sous-dossiers ont été ignorées (seul le premier niveau du dossier est traité).
+              </p>
+            )}
+
+            {preparation.entries.length === 0 ? (
+              <p className="empty-coords">Aucune image trouvée dans ce dossier.</p>
+            ) : (
+              <>
+                <label>Numéros détectés (modifiables avant génération):</label>
+                <div className="number-review-table">
+                  <div className="number-review-row number-review-header">
+                    <span>Fichier</span>
+                    <span>Numéro</span>
+                  </div>
+                  {preparation.entries.map((entry) => (
+                    <div key={entry.key} className="number-review-row">
+                      <span className="number-review-filename">{entry.file_name}</span>
+                      <input
+                        type="text"
+                        value={numberOverrides[entry.key] ?? entry.extracted_number}
+                        onChange={(event) => onNumberOverrideChange(entry.key, event.target.value)}
+                        disabled={isGenerating}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        <div className="form-actions">
+          <button
+            type="button"
+            onClick={onGeneratePreview}
+            disabled={!selectedTemplate || !selectedImageFolder || isGenerating || isPreviewLoading}
+            className="btn btn-secondary"
+          >
+            {isPreviewLoading ? "Génération de l'aperçu..." : "Aperçu avant génération"}
+          </button>
+        </div>
+
+        {previewImage && (
+          <div className="preview-container">
+            <p className="crop-panel-title">Aperçu du rendu (première image du dossier)</p>
+            <img src={previewImage} alt="Aperçu du rendu" className="preview-image" />
+          </div>
+        )}
+
         <div className="form-actions">
           <button
             onClick={onGenerate}
@@ -96,6 +191,11 @@ const TemplateGenerationView = ({
           >
             {isGenerating ? "Génération en cours..." : "Lancer la génération"}
           </button>
+          {isGenerating && (
+            <button type="button" onClick={onCancelGeneration} className="btn btn-danger">
+              Annuler
+            </button>
+          )}
         </div>
 
         {isGenerating && (

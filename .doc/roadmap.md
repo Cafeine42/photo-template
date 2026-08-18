@@ -7,57 +7,27 @@ Une phase n'a pas de date — c'est un ordre de priorité proposé.
 
 ---
 
-## Phase 1 — Fiabiliser ce qui existe (quick wins)
+## Phase 1 — Fiabiliser ce qui existe (quick wins) ✅ fait
 
 Ce sont des irritants qui touchent l'usage quotidien, corrigeables sans refonte.
 
-1. **Aperçu visuel des templates dans la liste**
-   Aujourd'hui la liste affiche le chemin brut du fichier image (`template_img`) au
-   lieu d'une vignette. Un utilisateur ne peut pas reconnaître un template au premier
-   coup d'œil.
-2. **Confirmation de suppression plus claire**
-   La suppression utilise une boîte `confirm()` du navigateur (générique, pas de nom
-   du template rappelé). Un vrai dialogue de confirmation ("Supprimer le template
-   *Diplôme 2026* ?") réduit le risque d'erreur.
-3. **Mémoriser le dernier dossier source utilisé**
-   Il faut rebrowser le dossier d'images à chaque génération, même en relançant sur le
-   même lot. Pré-remplir avec le dernier dossier choisi ferait gagner du temps.
-4. **Rendu du numéro en texte réel**
-   La zone bleue "Numéro" n'affiche actuellement qu'un rectangle noir semi-transparent
-   à la place du texte (voir known-issues.md). C'est la fonctionnalité la plus visible
-   qui ne fait pas ce qu'elle promet à l'écran — à traiter en priorité si le produit
-   est destiné à un usage réel.
-5. **Messages d'erreur/succès plus visibles et non ambigus**
-   Les messages (ex. "Erreur: ...") sont de simples paragraphes de texte, sans
-   auto-disparition cohérente ni distinction visuelle forte (icône, position fixe).
+1. ✅ **Aperçu visuel des templates dans la liste** — vignette (`asset://`) affichée dans `TemplateListView`.
+2. ✅ **Confirmation de suppression plus claire** — `ConfirmDialog` nommé ("Supprimer le template *X* ?").
+3. ✅ **Mémoriser le dernier dossier source utilisé** — persisté en `localStorage`.
+4. ✅ **Rendu du numéro en texte réel** — police DejaVu Sans embarquée, rendu via `imageproc`/`rusttype`.
+5. ✅ **Messages d'erreur/succès plus visibles et non ambigus** — composant `Toast` global, icône + auto-disparition.
 
-## Phase 2 — Donner confiance dans la génération en masse
+## Phase 2 — Donner confiance dans la génération en masse ✅ fait
 
-Le risque principal aujourd'hui : lancer un traitement sur tout un dossier sans
-pouvoir vérifier le résultat avant, ni revenir en arrière si le rendu est mauvais.
+Le risque principal : lancer un traitement sur tout un dossier sans pouvoir vérifier le
+résultat avant, ni revenir en arrière si le rendu est mauvais.
 
-6. **Aperçu avant génération**
-   Afficher le rendu composé d'une (ou quelques) photo(s) du dossier avant de lancer
-   le traitement complet, pour valider le cadrage sans attendre la fin du batch.
-7. **Vérification/correction manuelle du numéro extrait**
-   Le numéro est deviné automatiquement à partir du nom de fichier (premier nombre
-   trouvé). Proposer un tableau "fichier → numéro détecté" modifiable avant de lancer
-   la génération éviterait les erreurs silencieuses (mauvais chiffre extrait).
-8. **Support des sous-dossiers**
-   Les photos rangées dans des sous-dossiers sont actuellement ignorées sans
-   avertissement. Soit les inclure (option "inclure les sous-dossiers"), soit avertir
-   clairement combien de fichiers ont été ignorés et pourquoi.
-9. **Bouton Annuler pendant la génération**
-   Pas de moyen d'interrompre un traitement en cours (seulement une barre de
-   progression passive). Utile pour un gros lot où l'on se rend compte d'une erreur.
-10. **Choix du dossier de sortie**
-    L'archive et les images générées sont toujours écrites dans un dossier interne à
-    l'application. Permettre de choisir où exporter (ou au moins l'indiquer clairement
-    avant de lancer) évite d'avoir à chercher le résultat après coup.
-11. **Historique des générations**
-    Une fois l'app fermée, l'utilisateur perd la trace du chemin de l'archive
-    générée. Un historique simple ("dernières générations", avec lien vers le
-    dossier) éviterait de perdre ce résultat.
+6. ✅ **Aperçu avant génération** — bouton "Aperçu avant génération" (`preview_generation_image`) sur la première image du dossier.
+7. ✅ **Vérification/correction manuelle du numéro extrait** — tableau fichier → numéro modifiable (`prepare_generation` + overrides envoyés à la génération).
+8. ✅ **Support des sous-dossiers (avertissement)** — message d'avertissement si des images sont ignorées en sous-dossier (`skipped_subfolder_image_count`). L'inclusion effective des sous-dossiers reste à faire si le besoin se confirme.
+9. ✅ **Bouton Annuler pendant la génération** — `cancel_generation` + `GenerationCancelFlag` côté Rust.
+10. ✅ **Choix du dossier de sortie** — sélecteur de dossier de sortie optionnel (`select_output_folder`).
+11. ✅ **Historique des générations** — table `generation_history` + vue `HistoryView`.
 
 ## Phase 3 — Édition de template plus précise et plus riche
 

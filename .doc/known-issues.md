@@ -3,15 +3,12 @@
 Constats faits pendant l'exploration du code (pas des bugs signalés par l'utilisateur —
 à vérifier/prioriser avant d'agir dessus).
 
-## Zone Numéro non rendue en texte
+## ~~Zone Numéro non rendue en texte~~ (résolu — roadmap Phase 1)
 
-`add_text_overlay` (`src-tauri/src/lib.rs`) ne dessine **pas** le numéro en texte : elle
-peint un rectangle noir semi-transparent à l'emplacement estimé du texte
-(`Rgba([0,0,0,150])`), avec un commentaire `// TODO: Replace with proper font rendering
-when font files are available`. Les dépendances `imageproc` et `rusttype` sont déclarées
-dans `Cargo.toml` mais ne sont importées/utilisées nulle part. Le dossier
-`src-tauri/fonts/` existe mais est vide.
-→ Si une évolution demande "afficher le vrai numéro", c'est le point d'entrée.
+~~`add_text_overlay` ne dessinait pas le numéro en texte~~. Résolu : le texte est
+maintenant rendu avec la police DejaVu Sans embarquée (`src-tauri/fonts/DejaVuSans.ttf`,
+`imageproc::drawing::draw_text_mut`), avec ajustement automatique de la taille pour
+tenir dans la zone de recadrage.
 
 ## Chemin de la base SQLite relatif au CWD
 
@@ -49,11 +46,13 @@ cf. commit `d86071e`), le formulaire de création/édition (avec toute la logiqu
 dessin sur `<canvas>`) vit encore intégralement dans `App.tsx`. Une extraction en
 `TemplateFormView` (ou équivalent) suivrait le pattern déjà en place.
 
-## Pas de tests automatisés présents
+## ~~Pas de tests automatisés présents~~ (partiellement résolu)
 
-`src-tauri/tests/` existe mais est vide. `.junie/guidelines.md` documente comment lancer
-des tests Rust (`cargo test`) et suggère Vitest pour le frontend, mais rien n'est
-implémenté à ce jour.
+Côté Rust : résolu — `src-tauri/src/lib.rs` contient un module `#[cfg(test)]` avec des
+tests unitaires (CRUD, extraction de numéro, traitement d'image, archive ZIP,
+historique de générations). `src-tauri/tests/` (tests d'intégration) reste vide.
+Côté frontend : toujours aucun test (pas de Vitest configuré) — `.junie/guidelines.md`
+documente comment l'ajouter si besoin.
 
 ## Extraction du numéro par regex générique
 

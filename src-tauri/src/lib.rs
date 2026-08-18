@@ -1,26 +1,33 @@
 use diesel::prelude::*;
 use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Manager, Emitter};
 use image::{DynamicImage, Rgba};
 use std::io::Write;
 use zip::{ZipWriter, write::FileOptions};
 use walkdir::WalkDir;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use regex::Regex;
 use imageproc::drawing::{draw_text_mut, text_size};
 use rusttype::{Font, Scale};
+use base64::{engine::general_purpose, Engine as _};
 
 pub mod models;
 pub mod schema;
 
-use models::{NewPhotoTemplate, PhotoTemplate};
-use schema::photo_templates;
+use models::{GenerationHistoryEntry, NewGenerationHistoryEntry, NewPhotoTemplate, PhotoTemplate};
+use schema::{generation_history, photo_templates};
 
 pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!();
 
 const NUMBER_FONT_BYTES: &[u8] = include_bytes!("../fonts/DejaVuSans.ttf");
+
+/// Shared flag checked during `generate_images_with_template` so a
+/// long-running batch can be interrupted from `cancel_generation`.
+pub struct GenerationCancelFlag(AtomicBool);
 
 #[derive(Deserialize)]
 struct CropCoordinates {
@@ -178,15 +185,14 @@ async fn save_template_image(app_handle: AppHandle, file_data: Vec<u8>, filename
     Ok(file_path.to_string_lossy().to_string())
 }
 
-#[tauri::command]
-async fn select_image_folder(app_handle: AppHandle) -> Result<String, String> {
+async fn pick_folder_dialog(app_handle: &AppHandle) -> Result<String, String> {
     use tauri_plugin_dialog::{DialogExt};
     use std::sync::{Arc, Mutex};
     use tokio::sync::oneshot;
-    
+
     let (tx, rx) = oneshot::channel();
     let tx = Arc::new(Mutex::new(Some(tx)));
-    
+
     app_handle.dialog()
         .file()
         .pick_folder(move |folder_path| {
@@ -196,7 +202,7 @@ async fn select_image_folder(app_handle: AppHandle) -> Result<String, String> {
                 }
             }
         });
-    
+
     match rx.await {
         Ok(Some(path)) => Ok(path.to_string()),
         Ok(None) => Err("No folder selected".to_string()),
@@ -205,11 +211,125 @@ async fn select_image_folder(app_handle: AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn generate_images_with_template(
-    app_handle: AppHandle,
+async fn select_image_folder(app_handle: AppHandle) -> Result<String, String> {
+    pick_folder_dialog(&app_handle).await
+}
+
+#[tauri::command]
+async fn select_output_folder(app_handle: AppHandle) -> Result<String, String> {
+    pick_folder_dialog(&app_handle).await
+}
+
+#[tauri::command]
+fn cancel_generation(cancel_flag: tauri::State<'_, GenerationCancelFlag>) {
+    cancel_flag.0.store(true, Ordering::Relaxed);
+}
+
+#[derive(Serialize)]
+struct GenerationEntryPreview {
+    key: String,
+    file_name: String,
+    extracted_number: String,
+}
+
+#[derive(Serialize)]
+struct GenerationPreparation {
+    entries: Vec<GenerationEntryPreview>,
+    skipped_subfolder_image_count: usize,
+}
+
+#[tauri::command]
+fn prepare_generation(image_folder_path: String) -> Result<GenerationPreparation, String> {
+    let image_files = find_image_files(&image_folder_path)?;
+
+    let entries = image_files
+        .iter()
+        .enumerate()
+        .map(|(index, path)| {
+            let key = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            let extracted_number = extract_number_from_filename(&key, index + 1);
+            GenerationEntryPreview { key, file_name, extracted_number }
+        })
+        .collect();
+
+    let skipped_subfolder_image_count = count_images_in_subfolders(&image_folder_path)?;
+
+    Ok(GenerationPreparation { entries, skipped_subfolder_image_count })
+}
+
+#[tauri::command]
+fn preview_generation_image(
     template_id: i32,
     image_folder_path: String,
+    number_overrides: Option<HashMap<String, String>>,
 ) -> Result<String, String> {
+    let mut connection = establish_connection();
+    let template: PhotoTemplate = photo_templates::table
+        .find(template_id)
+        .first(&mut connection)
+        .map_err(|e| format!("Error loading template: {}", e))?;
+
+    let crop_coords: CropCoordinates = serde_json::from_str(&template.crop_photo)
+        .map_err(|e| format!("Error parsing crop coordinates: {}", e))?;
+    let crop_number_coords: Option<CropCoordinates> = if !template.crop_number.is_empty() {
+        Some(serde_json::from_str(&template.crop_number)
+            .map_err(|e| format!("Error parsing crop_number coordinates: {}", e))?)
+    } else {
+        None
+    };
+
+    let template_image = load_image(&template.template_img)?;
+
+    let image_files = find_image_files(&image_folder_path)?;
+    let first_image = image_files
+        .first()
+        .ok_or_else(|| "No image files found in the selected folder".to_string())?;
+
+    let source_image = load_and_resize_image(
+        first_image,
+        crop_coords.width as u32,
+        crop_coords.height as u32,
+        true,
+    )?;
+
+    let key = first_image.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    let extracted_number = number_overrides
+        .as_ref()
+        .and_then(|overrides| overrides.get(key).cloned())
+        .unwrap_or_else(|| extract_number_from_filename(key, 1));
+
+    let result_image = composite_images_with_text(
+        &template_image,
+        &source_image,
+        &crop_coords,
+        crop_number_coords.as_ref(),
+        &extracted_number,
+    )?;
+
+    encode_image_as_data_url(&result_image)
+}
+
+fn encode_image_as_data_url(image: &DynamicImage) -> Result<String, String> {
+    let mut png_bytes: Vec<u8> = Vec::new();
+    image
+        .write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageOutputFormat::Png)
+        .map_err(|e| format!("Error encoding preview image: {}", e))?;
+
+    Ok(format!("data:image/png;base64,{}", general_purpose::STANDARD.encode(&png_bytes)))
+}
+
+#[tauri::command]
+async fn generate_images_with_template(
+    app_handle: AppHandle,
+    cancel_flag: tauri::State<'_, GenerationCancelFlag>,
+    template_id: i32,
+    image_folder_path: String,
+    output_folder_path: Option<String>,
+    number_overrides: Option<HashMap<String, String>>,
+) -> Result<String, String> {
+    cancel_flag.0.store(false, Ordering::Relaxed);
+
     // 1. Get PhotoTemplate from database
     let mut connection = establish_connection();
     let template: PhotoTemplate = photo_templates::table
@@ -220,7 +340,7 @@ async fn generate_images_with_template(
     // 2. Parse crop coordinates
     let crop_coords: CropCoordinates = serde_json::from_str(&template.crop_photo)
         .map_err(|e| format!("Error parsing crop coordinates: {}", e))?;
-    
+
     // 2.1. Parse crop_number coordinates if available
     let crop_number_coords: Option<CropCoordinates> = if !template.crop_number.is_empty() {
         Some(serde_json::from_str(&template.crop_number)
@@ -239,9 +359,14 @@ async fn generate_images_with_template(
     }
 
     // 5. Create output directory for processed images
-    let app_data_dir = app_handle.path().app_data_dir()
-        .map_err(|e| format!("Error getting app data directory: {}", e))?;
-    let output_dir = app_data_dir.join("generated_images");
+    let output_dir = match output_folder_path {
+        Some(path) => PathBuf::from(path),
+        None => {
+            let app_data_dir = app_handle.path().app_data_dir()
+                .map_err(|e| format!("Error getting app data directory: {}", e))?;
+            app_data_dir.join("generated_images")
+        }
+    };
     fs::create_dir_all(&output_dir)
         .map_err(|e| format!("Error creating output directory: {}", e))?;
 
@@ -250,6 +375,13 @@ async fn generate_images_with_template(
     let total_images = image_files.len();
 
     for (index, image_file) in image_files.iter().enumerate() {
+        if cancel_flag.0.load(Ordering::Relaxed) {
+            return Err(format!(
+                "Génération annulée après {} image(s) traitée(s) sur {}",
+                index, total_images
+            ));
+        }
+
         // Load and resize source image
         let source_image = load_and_resize_image(
             image_file,
@@ -258,10 +390,13 @@ async fn generate_images_with_template(
             true,
         )?;
 
-        // Extract number from filename for text overlay
+        // Extract number from filename for text overlay, unless the user overrode it
         let filename = image_file.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-        let extracted_number = extract_number_from_filename(filename, index + 1);
-        
+        let extracted_number = number_overrides
+            .as_ref()
+            .and_then(|overrides| overrides.get(filename).cloned())
+            .unwrap_or_else(|| extract_number_from_filename(filename, index + 1));
+
         // Composite images with text overlay
         let result_image = composite_images_with_text(&template_image, &source_image, &crop_coords, crop_number_coords.as_ref(), &extracted_number)?;
 
@@ -283,9 +418,46 @@ async fn generate_images_with_template(
     }
 
     // 7. Create ZIP archive
-    let archive_path = create_archive(processed_files, &output_dir)?;
+    let archive_path = create_archive(processed_files.clone(), &output_dir)?;
+
+    // 8. Record this run in the generation history (best-effort, doesn't fail the whole run)
+    let _ = record_generation_history_impl(
+        &mut connection,
+        NewGenerationHistoryEntry {
+            template_name: template.name.clone(),
+            archive_path: archive_path.clone(),
+            image_count: processed_files.len() as i32,
+            created_at: chrono::Local::now().to_rfc3339(),
+        },
+    );
 
     Ok(archive_path)
+}
+
+fn record_generation_history_impl(
+    connection: &mut SqliteConnection,
+    entry: NewGenerationHistoryEntry,
+) -> Result<(), String> {
+    diesel::insert_into(generation_history::table)
+        .values(&entry)
+        .execute(connection)
+        .map_err(|e| format!("Error recording generation history: {}", e))?;
+    Ok(())
+}
+
+fn get_generation_history_impl(
+    connection: &mut SqliteConnection,
+) -> Result<Vec<GenerationHistoryEntry>, String> {
+    generation_history::table
+        .order(generation_history::id.desc())
+        .load::<GenerationHistoryEntry>(connection)
+        .map_err(|e| format!("Error loading generation history: {}", e))
+}
+
+#[tauri::command]
+fn get_generation_history() -> Result<Vec<GenerationHistoryEntry>, String> {
+    let mut connection = establish_connection();
+    get_generation_history_impl(&mut connection)
 }
 
 // Utility functions for image processing
@@ -315,6 +487,30 @@ fn find_image_files(folder_path: &str) -> Result<Vec<PathBuf>, String> {
     
     image_files.sort();
     Ok(image_files)
+}
+
+/// Counts image files located in subfolders of `folder_path` (depth >= 2),
+/// which `find_image_files` deliberately ignores. Used to warn the user
+/// instead of silently skipping them.
+fn count_images_in_subfolders(folder_path: &str) -> Result<usize, String> {
+    let supported_extensions = ["jpg", "jpeg", "png", "bmp", "gif", "tiff"];
+    let mut count = 0;
+
+    for entry in WalkDir::new(folder_path).min_depth(2) {
+        let entry = entry.map_err(|e| format!("Error walking directory: {}", e))?;
+
+        if entry.file_type().is_file() {
+            if let Some(extension) = entry.path().extension() {
+                if let Some(ext_str) = extension.to_str() {
+                    if supported_extensions.contains(&ext_str.to_lowercase().as_str()) {
+                        count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(count)
 }
 
 fn load_and_resize_image(
@@ -526,15 +722,21 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_sql::Builder::default().build())
+        .manage(GenerationCancelFlag(AtomicBool::new(false)))
         .invoke_handler(tauri::generate_handler![
-            greet, 
-            add_photo_template, 
-            get_photo_templates, 
-            update_photo_template, 
-            delete_photo_template, 
+            greet,
+            add_photo_template,
+            get_photo_templates,
+            update_photo_template,
+            delete_photo_template,
             save_template_image,
             select_image_folder,
+            select_output_folder,
+            prepare_generation,
+            preview_generation_image,
             generate_images_with_template,
+            cancel_generation,
+            get_generation_history,
             download_archive
         ])
         .run(tauri::generate_context!())
@@ -648,6 +850,59 @@ mod tests {
             .collect();
 
         assert_eq!(names, vec!["a.jpg".to_string(), "b.PNG".to_string()]);
+    }
+
+    #[test]
+    fn count_images_in_subfolders_ignores_top_level_files() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("top.jpg"), b"fake").unwrap();
+        let nested = dir.path().join("nested");
+        fs::create_dir(&nested).unwrap();
+        fs::write(nested.join("a.jpg"), b"fake").unwrap();
+        fs::write(nested.join("b.png"), b"fake").unwrap();
+        fs::write(nested.join("c.txt"), b"fake").unwrap();
+
+        let count = count_images_in_subfolders(dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn prepare_generation_lists_entries_and_warns_about_subfolders() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("photo_007.jpg"), b"fake").unwrap();
+        let nested = dir.path().join("nested");
+        fs::create_dir(&nested).unwrap();
+        fs::write(nested.join("ignored.jpg"), b"fake").unwrap();
+
+        let preparation = prepare_generation(dir.path().to_str().unwrap().to_string()).unwrap();
+
+        assert_eq!(preparation.entries.len(), 1);
+        assert_eq!(preparation.entries[0].key, "photo_007");
+        assert_eq!(preparation.entries[0].extracted_number, "007");
+        assert_eq!(preparation.skipped_subfolder_image_count, 1);
+    }
+
+    // --- Generation history ---
+
+    #[test]
+    fn record_and_get_generation_history() {
+        let mut connection = test_connection();
+
+        record_generation_history_impl(
+            &mut connection,
+            NewGenerationHistoryEntry {
+                template_name: "Diplôme".to_string(),
+                archive_path: "/tmp/generated_images.zip".to_string(),
+                image_count: 12,
+                created_at: "2026-08-18T10:00:00+00:00".to_string(),
+            },
+        )
+        .unwrap();
+
+        let history = get_generation_history_impl(&mut connection).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].template_name, "Diplôme");
+        assert_eq!(history[0].image_count, 12);
     }
 
     // --- Image resizing ---
