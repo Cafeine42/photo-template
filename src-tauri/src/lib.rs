@@ -9,6 +9,8 @@ use zip::{ZipWriter, write::FileOptions};
 use walkdir::WalkDir;
 use serde::Deserialize;
 use regex::Regex;
+use imageproc::drawing::{draw_text_mut, text_size};
+use rusttype::{Font, Scale};
 
 pub mod models;
 pub mod schema;
@@ -17,6 +19,8 @@ use models::{NewPhotoTemplate, PhotoTemplate};
 use schema::photo_templates;
 
 pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!();
+
+const NUMBER_FONT_BYTES: &[u8] = include_bytes!("../fonts/DejaVuSans.ttf");
 
 #[derive(Deserialize)]
 struct CropCoordinates {
@@ -373,41 +377,41 @@ fn add_text_overlay(
     txt_crop: &CropCoordinates,
     number: &str,
 ) -> Result<DynamicImage, String> {
-    // Create the text to display
     let text = format!("N° {}", number);
-    
-    // For simplicity, we'll use a basic approach to draw text
-    // Convert to RGBA image for text drawing
+
+    let font = Font::try_from_bytes(NUMBER_FONT_BYTES)
+        .ok_or_else(|| "Error loading embedded number font".to_string())?;
+
     let mut rgba_image = image.to_rgba8();
-    
-    // Calculate centered position within the crop_number area
-    // Approximate text dimensions (simple estimation)
-    let estimated_text_width = text.len() as f32 * 12.0; // rough estimation
-    let estimated_text_height = 30.0;
-    
-    let text_x = (txt_crop.x + txt_crop.width / 2.0) - (estimated_text_width / 2.0);
-    let text_y = (txt_crop.y + txt_crop.height / 2.0) - (estimated_text_height / 2.0);
-    
-    // For now, use a basic black rectangle overlay to mark the number area
-    // This ensures the function works and marks where text would appear
-    // In production, you'd want to add a proper font file or use system fonts
-    let rect_x = text_x.max(0.0) as u32;
-    let rect_y = text_y.max(0.0) as u32;
-    let rect_width = estimated_text_width as u32;
-    let rect_height = estimated_text_height as u32;
-    
-    // Draw a semi-transparent black rectangle to indicate the number area
-    for x in rect_x..rect_x.saturating_add(rect_width).min(rgba_image.width()) {
-        for y in rect_y..rect_y.saturating_add(rect_height).min(rgba_image.height()) {
-            if x < rgba_image.width() && y < rgba_image.height() {
-                rgba_image.put_pixel(x, y, Rgba([0u8, 0u8, 0u8, 150u8]));
-            }
-        }
+
+    // Start from a font size close to the crop height, then shrink it so the
+    // text still fits the crop width.
+    let mut font_size = txt_crop.height.max(1.0) * 0.7;
+    let mut scale = Scale::uniform(font_size);
+    let mut text_width = text_size(scale, &font, &text).0 as f32;
+
+    if text_width > txt_crop.width && text_width > 0.0 {
+        font_size = (font_size * (txt_crop.width / text_width)).max(6.0);
+        scale = Scale::uniform(font_size);
+        text_width = text_size(scale, &font, &text).0 as f32;
     }
-    
-    // TODO: Replace with proper font rendering when font files are available
-    // For now this provides visual confirmation that number extraction is working
-    
+
+    let text_height = text_size(scale, &font, &text).1 as f32;
+
+    // Center the text within the crop_number area.
+    let text_x = (txt_crop.x + (txt_crop.width - text_width) / 2.0).max(0.0) as i32;
+    let text_y = (txt_crop.y + (txt_crop.height - text_height) / 2.0).max(0.0) as i32;
+
+    draw_text_mut(
+        &mut rgba_image,
+        Rgba([0u8, 0u8, 0u8, 255u8]),
+        text_x,
+        text_y,
+        scale,
+        &font,
+        &text,
+    );
+
     Ok(DynamicImage::ImageRgba8(rgba_image))
 }
 
@@ -688,6 +692,35 @@ mod tests {
         assert_eq!(rgb.get_pixel(6, 6), &image::Rgb([0, 0, 0]));
         // Outside the source but inside the template, original color remains
         assert_eq!(rgb.get_pixel(0, 0), &image::Rgb([255, 255, 255]));
+    }
+
+    // --- Number text overlay ---
+
+    #[test]
+    fn add_text_overlay_draws_visible_text_in_crop_area() {
+        let template = DynamicImage::new_rgba8(200, 100);
+        let crop = CropCoordinates {
+            x: 10.0,
+            y: 10.0,
+            width: 80.0,
+            height: 30.0,
+        };
+
+        let result = add_text_overlay(template, &crop, "42").unwrap();
+        let rgba = result.to_rgba8();
+
+        let mut has_ink = false;
+        for y in (crop.y as u32)..((crop.y + crop.height) as u32) {
+            for x in (crop.x as u32)..((crop.x + crop.width) as u32) {
+                let pixel = rgba.get_pixel(x, y);
+                if pixel[3] > 0 {
+                    has_ink = true;
+                    break;
+                }
+            }
+        }
+
+        assert!(has_ink, "expected the number text to draw at least one visible pixel in the crop area");
     }
 
     // --- Archive creation ---

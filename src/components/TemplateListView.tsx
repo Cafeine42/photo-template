@@ -2,16 +2,14 @@ import { PhotoTemplate } from "../types/photoTemplate";
 
 type TemplateListViewProps = {
   photoTemplates: PhotoTemplate[];
-  message: string;
   onCreate: () => void;
   onGenerate: () => void;
   onEdit: (template: PhotoTemplate) => void;
-  onDelete: (id: number) => void;
+  onDelete: (template: PhotoTemplate) => void;
 };
 
 const TemplateListView = ({
   photoTemplates,
-  message,
   onCreate,
   onGenerate,
   onEdit,
@@ -31,25 +29,23 @@ const TemplateListView = ({
         </div>
       </div>
 
-      {message && (
-        <p className={`message ${message.includes('Erreur') ? 'error' : 'success'}`}>
-          {message}
-        </p>
-      )}
-
       <div className="templates-list">
         {photoTemplates.length === 0 ? (
           <p>Aucun Photo Template trouvé. Créez-en un nouveau !</p>
         ) : (
           photoTemplates.map((template) => (
             <div key={template.id} className="template-card">
+              <div className="template-thumbnail">
+                {template.template_img ? (
+                  <img
+                    src={`asset://localhost/${template.template_img}`}
+                    alt={`Aperçu du template ${template.name}`}
+                  />
+                ) : (
+                  <div className="template-thumbnail-placeholder">Pas d'aperçu</div>
+                )}
+              </div>
               <h3>{template.name}</h3>
-              <p>
-                <strong>Numéro de recadrage:</strong> {template.crop_number}
-              </p>
-              <p>
-                <strong>Image du template:</strong> {template.template_img}
-              </p>
               <div className="template-actions">
                 <button
                   onClick={() => onEdit(template)}
@@ -58,7 +54,7 @@ const TemplateListView = ({
                   Modifier
                 </button>
                 <button
-                  onClick={() => onDelete(template.id)}
+                  onClick={() => onDelete(template)}
                   className="btn btn-danger"
                 >
                   Supprimer

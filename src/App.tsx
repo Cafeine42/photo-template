@@ -4,9 +4,13 @@ import { listen } from "@tauri-apps/api/event";
 import TemplateListView from "./components/TemplateListView";
 import { PhotoTemplate } from "./types/photoTemplate";
 import TemplateGenerationView from "./components/TemplateGenerationView";
+import Toast from "./components/Toast";
+import ConfirmDialog from "./components/ConfirmDialog";
 import "./App.css";
 
 type ViewMode = 'list' | 'create' | 'edit' | 'generate';
+
+const LAST_IMAGE_FOLDER_KEY = "photo-template:lastImageFolder";
 
 function App() {
   const [photoTemplates, setPhotoTemplates] = useState<PhotoTemplate[]>([]);
@@ -32,16 +36,22 @@ function App() {
 
   // New state for generation process
   const [selectedTemplate, setSelectedTemplate] = useState<PhotoTemplate | null>(null);
-  const [selectedImageFolder, setSelectedImageFolder] = useState<string>("");
+  const [selectedImageFolder, setSelectedImageFolder] = useState<string>(
+    () => localStorage.getItem(LAST_IMAGE_FOLDER_KEY) || ""
+  );
   const [generationProgress, setGenerationProgress] = useState<number>(0);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [archivePath, setArchivePath] = useState<string>("");
+
+  // Confirmation de suppression
+  const [pendingDelete, setPendingDelete] = useState<PhotoTemplate | null>(null);
 
   // Tauri invocation functions
   const selectImageFolder = async () => {
     try {
       const folderPath = await invoke<string>("select_image_folder");
       setSelectedImageFolder(folderPath);
+      localStorage.setItem(LAST_IMAGE_FOLDER_KEY, folderPath);
     } catch (error) {
       setMessage(`Erreur lors de la sélection du dossier: ${error}`);
     }
@@ -266,16 +276,23 @@ function App() {
     }
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm("Êtes-vous sûr de vouloir supprimer ce Photo Template ?")) {
-      return;
-    }
+  const requestDelete = (template: PhotoTemplate) => {
+    setPendingDelete(template);
+  };
+
+  const cancelDelete = () => {
+    setPendingDelete(null);
+  };
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+    const template = pendingDelete;
+    setPendingDelete(null);
 
     try {
-      await invoke("delete_photo_template", { id });
-      setMessage("Photo Template supprimé avec succès!");
+      await invoke("delete_photo_template", { id: template.id });
+      setMessage(`Photo Template "${template.name}" supprimé avec succès!`);
       loadPhotoTemplates();
-      setTimeout(() => setMessage(""), 3000);
     } catch (error) {
       setMessage(`Erreur lors de la suppression: ${error}`);
     }
@@ -404,23 +421,22 @@ function App() {
     drawCropRect();
   }, [cropRect, cropNumberRect]);
 
-  // List View
+  let content;
+
   if (currentMode === 'list') {
-    return (
+    // List View
+    content = (
       <TemplateListView
         photoTemplates={photoTemplates}
-        message={message}
         onCreate={switchToCreateMode}
         onGenerate={switchToGenerateMode}
         onEdit={switchToEditMode}
-        onDelete={handleDelete}
+        onDelete={requestDelete}
       />
     );
-  }
-
-  // Generation View
-  if (currentMode === 'generate') {
-    return (
+  } else if (currentMode === 'generate') {
+    // Generation View
+    content = (
       <TemplateGenerationView
         photoTemplates={photoTemplates}
         selectedTemplate={selectedTemplate}
@@ -433,13 +449,11 @@ function App() {
         archivePath={archivePath}
         onDownload={downloadArchive}
         onBack={switchToListMode}
-        message={message}
       />
     );
-  }
-
-  // Create/Edit Form View
-  return (
+  } else {
+    // Create/Edit Form View
+    content = (
     <main className="container">
       <div className="header">
         <h1>{currentMode === 'create' ? 'Créer' : 'Modifier'} un Photo Template</h1>
@@ -571,9 +585,24 @@ function App() {
           </button>
         </div>
       </form>
-      
-      {message && <p className={`message ${message.includes('Erreur') ? 'error' : 'success'}`}>{message}</p>}
     </main>
+    );
+  }
+
+  return (
+    <>
+      <Toast message={message} onDismiss={() => setMessage("")} />
+      {pendingDelete && (
+        <ConfirmDialog
+          title="Supprimer le template"
+          message={`Êtes-vous sûr de vouloir supprimer le Photo Template "${pendingDelete.name}" ? Cette action est irréversible.`}
+          confirmLabel="Supprimer"
+          onConfirm={confirmDelete}
+          onCancel={cancelDelete}
+        />
+      )}
+      {content}
+    </>
   );
 }
 

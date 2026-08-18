@@ -13,7 +13,6 @@ interface TemplateGenerationViewProps {
   archivePath: string;
   onDownload: () => void;
   onBack: () => void;
-  message: string;
 }
 
 const TemplateGenerationView = ({
@@ -28,7 +27,6 @@ const TemplateGenerationView = ({
   archivePath,
   onDownload,
   onBack,
-  message,
 }: TemplateGenerationViewProps) => {
   const handleTemplateChange = (event: ChangeEvent<HTMLSelectElement>) => {
     const templateId = parseInt(event.target.value, 10);
@@ -49,12 +47,6 @@ const TemplateGenerationView = ({
           Retour à la liste
         </button>
       </div>
-
-      {message && (
-        <p className={`message ${message.includes('Erreur') ? 'error' : 'success'}`}>
-          {message}
-        </p>
-      )}
 
       <div className="generation-form">
         <div className="form-group">
