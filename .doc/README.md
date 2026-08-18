@@ -15,3 +15,5 @@ côté UI et côté moteur Rust). Pour les commandes de build/test/lint, voir
 - [fonctionnalites.md](./fonctionnalites.md) — ce que fait l'application, du point de vue utilisateur.
 - [architecture.md](./architecture.md) — comment c'est construit : flux de données, modules, schéma DB, commandes Tauri.
 - [known-issues.md](./known-issues.md) — dette technique et pièges identifiés pendant l'exploration.
+- [roadmap.md](./roadmap.md) — améliorations orientées utilisateur, organisées en phases.
+- [build-windows.md](./build-windows.md) — comment builder un installeur Windows (.msi/.exe) pour distribution client.

@@ -10,15 +10,16 @@ maintenant rendu avec la police DejaVu Sans embarquée (`src-tauri/fonts/DejaVuS
 `imageproc::drawing::draw_text_mut`), avec ajustement automatique de la taille pour
 tenir dans la zone de recadrage.
 
-## Chemin de la base SQLite relatif au CWD
+## ~~Chemin de la base SQLite relatif au CWD~~ (résolu)
 
-`establish_connection()` utilise l'URL fixe `"sqlite://photo_template.db"`, un chemin
-**relatif**. Le fichier `.db` se retrouve donc créé dans le répertoire de travail courant
-du process (d'où la présence de `src-tauri/photo_template.db` en `dev`), et non dans
-`app_data_dir()` comme le sont `template_images/` et `generated_images/`. En build/release
-sur une autre plateforme, le CWD au lancement peut différer et faire échouer/dupliquer la
-base. À corriger en pointant vers `app_handle.path().app_data_dir()` si on touche à cette
-zone.
+~~`establish_connection()` utilisait l'URL fixe `"sqlite://photo_template.db"`, un chemin
+relatif~~. Résolu : `establish_connection(&app_handle)` ouvre désormais la base dans
+`app_handle.path().app_data_dir()` (fonction `database_path`), comme `template_images/`
+et `generated_images/`. Les migrations tournent dans un hook `.setup()` du builder Tauri
+(nécessaire pour disposer d'un `AppHandle`), plus avant sa construction. Ce point était
+un **bloquant réel** pour la distribution Windows via `.msi` : une installation par
+défaut dans `C:\Program Files\...` n'est pas accessible en écriture pour un utilisateur
+standard, ce qui aurait fait planter l'app au lancement chez tout client non-admin.
 
 ## Pas de pool de connexions / pas de state Tauri
 

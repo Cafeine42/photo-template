@@ -87,13 +87,14 @@ fn add_photo_template_impl(
 
 #[tauri::command]
 fn add_photo_template(
+    app_handle: AppHandle,
     name: String,
     crop_photo: String,
     crop_number: String,
     template_img: String,
     category: String,
 ) -> Result<PhotoTemplate, String> {
-    let mut connection = establish_connection();
+    let mut connection = establish_connection(&app_handle);
     add_photo_template_impl(
         &mut connection,
         NewPhotoTemplate {
@@ -113,8 +114,8 @@ fn get_photo_templates_impl(connection: &mut SqliteConnection) -> Result<Vec<Pho
 }
 
 #[tauri::command]
-fn get_photo_templates() -> Result<Vec<PhotoTemplate>, String> {
-    let mut connection = establish_connection();
+fn get_photo_templates(app_handle: AppHandle) -> Result<Vec<PhotoTemplate>, String> {
+    let mut connection = establish_connection(&app_handle);
     get_photo_templates_impl(&mut connection)
 }
 
@@ -147,6 +148,7 @@ fn update_photo_template_impl(
 
 #[tauri::command]
 fn update_photo_template(
+    app_handle: AppHandle,
     id: i32,
     name: String,
     crop_photo: String,
@@ -154,7 +156,7 @@ fn update_photo_template(
     template_img: String,
     category: String,
 ) -> Result<PhotoTemplate, String> {
-    let mut connection = establish_connection();
+    let mut connection = establish_connection(&app_handle);
     update_photo_template_impl(&mut connection, id, name, crop_photo, crop_number, template_img, category)
 }
 
@@ -171,8 +173,8 @@ fn delete_photo_template_impl(connection: &mut SqliteConnection, id: i32) -> Res
 }
 
 #[tauri::command]
-fn delete_photo_template(id: i32) -> Result<String, String> {
-    let mut connection = establish_connection();
+fn delete_photo_template(app_handle: AppHandle, id: i32) -> Result<String, String> {
+    let mut connection = establish_connection(&app_handle);
     delete_photo_template_impl(&mut connection, id)
 }
 
@@ -284,11 +286,12 @@ fn prepare_generation(image_folder_path: String) -> Result<GenerationPreparation
 
 #[tauri::command]
 fn preview_generation_image(
+    app_handle: AppHandle,
     template_id: i32,
     image_folder_path: String,
     number_overrides: Option<HashMap<String, String>>,
 ) -> Result<String, String> {
-    let mut connection = establish_connection();
+    let mut connection = establish_connection(&app_handle);
     let template: PhotoTemplate = photo_templates::table
         .find(template_id)
         .first(&mut connection)
@@ -363,7 +366,7 @@ async fn generate_images_with_template(
     let jpeg_quality = jpeg_quality.unwrap_or(90).clamp(1, 100);
 
     // 1. Get PhotoTemplate from database
-    let mut connection = establish_connection();
+    let mut connection = establish_connection(&app_handle);
     let template: PhotoTemplate = photo_templates::table
         .find(template_id)
         .first(&mut connection)
@@ -486,8 +489,8 @@ fn get_generation_history_impl(
 }
 
 #[tauri::command]
-fn get_generation_history() -> Result<Vec<GenerationHistoryEntry>, String> {
-    let mut connection = establish_connection();
+fn get_generation_history(app_handle: AppHandle) -> Result<Vec<GenerationHistoryEntry>, String> {
+    let mut connection = establish_connection(&app_handle);
     get_generation_history_impl(&mut connection)
 }
 
@@ -776,9 +779,23 @@ async fn download_archive(app_handle: AppHandle, archive_path: String) -> Result
     Ok(())
 }
 
-fn establish_connection() -> SqliteConnection {
-    let database_url = "sqlite://photo_template.db";
-    SqliteConnection::establish(database_url)
+/// The database always lives under the app's data directory (writable for a
+/// standard, non-admin user), never next to the executable: on Windows a
+/// per-machine install places the executable under `C:\Program Files\...`,
+/// which standard users cannot write to.
+fn database_path(app_handle: &AppHandle) -> PathBuf {
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .expect("Error getting app data directory");
+    fs::create_dir_all(&app_data_dir).expect("Error creating app data directory");
+    app_data_dir.join("photo_template.db")
+}
+
+fn establish_connection(app_handle: &AppHandle) -> SqliteConnection {
+    let database_path = database_path(app_handle);
+    let database_url = format!("sqlite://{}", database_path.to_string_lossy());
+    SqliteConnection::establish(&database_url)
         .unwrap_or_else(|_| panic!("Error connecting to {}", database_url))
 }
 
@@ -788,15 +805,17 @@ fn run_migrations(connection: &mut SqliteConnection) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Run database migrations on startup
-    let mut connection = establish_connection();
-    run_migrations(&mut connection);
-    
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_sql::Builder::default().build())
         .manage(GenerationCancelFlag(AtomicBool::new(false)))
+        .setup(|app| {
+            // Run database migrations on startup
+            let mut connection = establish_connection(&app.app_handle().clone());
+            run_migrations(&mut connection);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             greet,
             add_photo_template,

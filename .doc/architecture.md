@@ -98,12 +98,13 @@ aussi par `prepare_generation`/`preview_generation_image` :
 
 ### Accès base de données
 
-- `establish_connection()` ouvre **une nouvelle connexion SQLite à chaque appel de
-  commande** (pas de pool, pas de state Tauri partagé) vers l'URL fixe
-  `sqlite://photo_template.db` (chemin **relatif** au répertoire de travail courant du
-  process — voir known-issues.md).
-- Les migrations Diesel (`MIGRATIONS`, `embed_migrations!()`) sont exécutées au démarrage
-  dans `run()`, avant même l'initialisation du `tauri::Builder`.
+- `establish_connection(&app_handle)` ouvre **une nouvelle connexion SQLite à chaque
+  appel de commande** (pas de pool, pas de state Tauri partagé) vers
+  `<app_data_dir>/photo_template.db` (voir `database_path()`), toutes les commandes qui
+  touchent la base reçoivent donc `app_handle: AppHandle` en paramètre.
+- Les migrations Diesel (`MIGRATIONS`, `embed_migrations!()`) sont exécutées dans le hook
+  `.setup()` du `tauri::Builder` (nécessaire pour disposer d'un `AppHandle` avant de
+  résoudre le chemin de la base).
 - Le plugin `tauri-plugin-sql` (feature `sqlite`) est déclaré en dépendance et dans les
   capabilities, mais **n'est pas utilisé** dans le code Rust ni dans le frontend : tous
   les accès DB passent par Diesel directement dans les commandes `#[tauri::command]`.
