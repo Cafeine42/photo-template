@@ -3,6 +3,7 @@ import { PhotoTemplate } from "../types/photoTemplate";
 
 type TemplateListViewProps = {
   photoTemplates: PhotoTemplate[];
+  thumbnails: Record<number, string>;
   onCreate: () => void;
   onGenerate: () => void;
   onHistory: () => void;
@@ -15,6 +16,7 @@ type SortOrder = 'name-asc' | 'name-desc' | 'newest' | 'oldest';
 
 const TemplateListView = ({
   photoTemplates,
+  thumbnails,
   onCreate,
   onGenerate,
   onHistory,
@@ -113,13 +115,15 @@ const TemplateListView = ({
           visibleTemplates.map((template) => (
             <div key={template.id} className="template-card">
               <div className="template-thumbnail">
-                {template.template_img ? (
+                {thumbnails[template.id] ? (
                   <img
-                    src={`asset://localhost/${template.template_img}`}
+                    src={thumbnails[template.id]}
                     alt={`Aperçu du template ${template.name}`}
                   />
                 ) : (
-                  <div className="template-thumbnail-placeholder">Pas d'aperçu</div>
+                  <div className="template-thumbnail-placeholder">
+                    {template.template_img ? "Chargement..." : "Pas d'aperçu"}
+                  </div>
                 )}
               </div>
               <h3>{template.name}</h3>

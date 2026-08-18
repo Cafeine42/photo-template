@@ -82,6 +82,7 @@ const resizeRect = (rect: RectShape, handle: Handle, dx: number, dy: number): Re
 
 function App() {
   const [photoTemplates, setPhotoTemplates] = useState<PhotoTemplate[]>([]);
+  const [templateThumbnails, setTemplateThumbnails] = useState<Record<number, string>>({});
   const [currentMode, setCurrentMode] = useState<ViewMode>('list');
   const [editingTemplate, setEditingTemplate] = useState<PhotoTemplate | null>(null);
   const [formData, setFormData] = useState({
@@ -323,9 +324,31 @@ function App() {
     try {
       const templates: PhotoTemplate[] = await invoke("get_photo_templates");
       setPhotoTemplates(templates);
+      loadTemplateThumbnails(templates);
     } catch (error) {
       setMessage(`Erreur lors du chargement: ${error}`);
     }
+  };
+
+  // `asset://` isn't enabled in this app's Tauri config/capabilities, so list
+  // thumbnails are fetched as data URLs instead (same reason as
+  // loadUploadedImagePreview above).
+  const loadTemplateThumbnails = async (templates: PhotoTemplate[]) => {
+    const entries = await Promise.all(
+      templates
+        .filter((template) => template.template_img)
+        .map(async (template): Promise<[number, string] | null> => {
+          try {
+            const dataUrl = await invoke<string>("load_image_as_data_url", { imagePath: template.template_img });
+            return [template.id, dataUrl];
+          } catch {
+            return null;
+          }
+        })
+    );
+    setTemplateThumbnails(
+      Object.fromEntries(entries.filter((entry): entry is [number, string] => entry !== null))
+    );
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -358,7 +381,19 @@ function App() {
     setCurrentMode('create');
   };
 
-  const switchToEditMode = (template: PhotoTemplate) => {
+  // `asset://` isn't enabled in this app's Tauri config/capabilities, so an
+  // existing template's background is fetched as a data URL instead.
+  const loadUploadedImagePreview = async (templateImgPath: string) => {
+    try {
+      const dataUrl = await invoke<string>("load_image_as_data_url", { imagePath: templateImgPath });
+      setUploadedImage(dataUrl);
+    } catch (error) {
+      setMessage(`Erreur lors du chargement de l'image du template: ${error}`);
+      setUploadedImage(null);
+    }
+  };
+
+  const switchToEditMode = async (template: PhotoTemplate) => {
     setFormData({
       name: template.name,
       crop_photo: template.crop_photo,
@@ -369,11 +404,11 @@ function App() {
     setEditingTemplate(template);
     setCurrentMode('edit');
     setMessage("");
-    
+
     // Load existing image if template_img exists and is a file path
     if (template.template_img) {
-      setUploadedImage(`asset://localhost/${template.template_img}`);
-      
+      await loadUploadedImagePreview(template.template_img);
+
       // Parse existing crop coordinates for photo
       try {
         if (template.crop_photo) {
@@ -399,7 +434,7 @@ function App() {
     }
   };
 
-  const duplicateTemplate = (template: PhotoTemplate) => {
+  const duplicateTemplate = async (template: PhotoTemplate) => {
     setFormData({
       name: `${template.name} (copie)`,
       crop_photo: template.crop_photo,
@@ -413,7 +448,7 @@ function App() {
     setZoomLevel(1);
 
     if (template.template_img) {
-      setUploadedImage(`asset://localhost/${template.template_img}`);
+      await loadUploadedImagePreview(template.template_img);
 
       try {
         setCropRect(template.crop_photo ? JSON.parse(template.crop_photo) : DEFAULT_RECT);
@@ -729,6 +764,7 @@ function App() {
     content = (
       <TemplateListView
         photoTemplates={photoTemplates}
+        thumbnails={templateThumbnails}
         onCreate={switchToCreateMode}
         onGenerate={switchToGenerateMode}
         onHistory={switchToHistoryMode}

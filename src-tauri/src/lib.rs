@@ -313,11 +313,10 @@ fn preview_generation_image(
         .first()
         .ok_or_else(|| "No image files found in the selected folder".to_string())?;
 
-    let source_image = load_and_resize_image(
+    let source_image = load_and_resize_image_cover(
         first_image,
         crop_coords.width as u32,
         crop_coords.height as u32,
-        true,
     )?;
 
     let key = first_image.file_stem().and_then(|s| s.to_str()).unwrap_or("");
@@ -344,6 +343,16 @@ fn encode_image_as_data_url(image: &DynamicImage) -> Result<String, String> {
         .map_err(|e| format!("Error encoding preview image: {}", e))?;
 
     Ok(format!("data:image/png;base64,{}", general_purpose::STANDARD.encode(&png_bytes)))
+}
+
+/// Reads an arbitrary image from disk and returns it as a data URL. Used by the
+/// frontend to display template backgrounds (e.g. when opening the edit form)
+/// without relying on the `asset://` protocol, which isn't enabled in
+/// `tauri.conf.json`/capabilities for this app.
+#[tauri::command]
+fn load_image_as_data_url(image_path: String) -> Result<String, String> {
+    let image = load_image(&image_path)?;
+    encode_image_as_data_url(&image)
 }
 
 #[tauri::command]
@@ -418,11 +427,10 @@ async fn generate_images_with_template(
         }
 
         // Load and resize source image
-        let source_image = load_and_resize_image(
+        let source_image = load_and_resize_image_cover(
             image_file,
             crop_coords.width as u32,
             crop_coords.height as u32,
-            true,
         )?;
 
         // Extract number from filename for text overlay, unless the user overrode it
@@ -440,7 +448,7 @@ async fn generate_images_with_template(
             Some(name) => name.to_string(),
             None => format!("image_{}", index + 1),
         };
-        let output_filename = format!("{}_processed.{}", original_filename, output_format.extension());
+        let output_filename = format!("{}.{}", original_filename, output_format.extension());
         let output_path = output_dir.join(&output_filename);
         save_processed_image(&result_image, &output_path, output_format, jpeg_quality)?;
 
@@ -583,29 +591,43 @@ fn count_images_in_subfolders(folder_path: &str) -> Result<usize, String> {
     Ok(count)
 }
 
-fn load_and_resize_image(
+/// Loads `source_path` and returns an image that exactly fills a
+/// `target_width` x `target_height` box: scaled (preserving aspect ratio, no
+/// distortion) to fully cover the box, then center-cropped so it never
+/// exceeds it. This also keeps the in-memory image close to the crop's final
+/// size instead of the source's native resolution, which is what actually
+/// speeds up compositing on large camera photos.
+fn load_and_resize_image_cover(
     source_path: &Path,
     target_width: u32,
     target_height: u32,
-    preserve_ratio: bool,
 ) -> Result<DynamicImage, String> {
     let img = image::open(source_path)
         .map_err(|e| format!("Error loading image {:?}: {}", source_path, e))?;
-    
-    if preserve_ratio {
-        // Calculate the scaling factor to fit within target dimensions while preserving aspect ratio
-        let (orig_width, orig_height) = (img.width(), img.height());
-        let width_ratio = target_width as f32 / orig_width as f32;
-        let height_ratio = target_height as f32 / orig_height as f32;
-        let scale_ratio = width_ratio.min(height_ratio);
-        
-        let new_width = (orig_width as f32 * scale_ratio) as u32;
-        let new_height = (orig_height as f32 * scale_ratio) as u32;
-        
-        Ok(img.resize(new_width, new_height, image::imageops::FilterType::Lanczos3))
-    } else {
-        Ok(img.resize_exact(target_width, target_height, image::imageops::FilterType::Lanczos3))
+
+    let (orig_width, orig_height) = (img.width(), img.height());
+    if orig_width == 0 || orig_height == 0 || target_width == 0 || target_height == 0 {
+        return Ok(img);
     }
+
+    // Scale so the image fully covers the target box (may overflow one
+    // dimension), preserving aspect ratio.
+    let width_ratio = target_width as f32 / orig_width as f32;
+    let height_ratio = target_height as f32 / orig_height as f32;
+    let scale_ratio = width_ratio.max(height_ratio);
+
+    let scaled_width = ((orig_width as f32 * scale_ratio).round() as u32).max(1);
+    let scaled_height = ((orig_height as f32 * scale_ratio).round() as u32).max(1);
+
+    let resized = img.resize_exact(scaled_width, scaled_height, image::imageops::FilterType::Lanczos3);
+
+    // Crop away the centered overflow so the result matches the box exactly.
+    let crop_x = scaled_width.saturating_sub(target_width) / 2;
+    let crop_y = scaled_height.saturating_sub(target_height) / 2;
+    let crop_width = target_width.min(scaled_width);
+    let crop_height = target_height.min(scaled_height);
+
+    Ok(resized.crop_imm(crop_x, crop_y, crop_width, crop_height))
 }
 
 fn extract_number_from_filename(filename: &str, fallback_id: usize) -> String {
@@ -657,23 +679,40 @@ fn add_text_overlay(
         .unwrap_or(Rgba([0u8, 0u8, 0u8, 255u8]));
     let font_scale = txt_crop.font_scale.unwrap_or(1.0).max(0.1);
 
-    // Start from a font size close to the crop height, then shrink it so the
-    // text still fits the crop width.
+    // Start from a font size close to the crop height, then shrink it (width,
+    // then height) so the text always stays within the crop area regardless
+    // of the requested font_scale.
     let mut font_size = txt_crop.height.max(1.0) * 0.7 * font_scale;
     let mut scale = Scale::uniform(font_size);
-    let mut text_width = text_size(scale, &font, &text).0 as f32;
+    let (mut text_width, mut text_height) = {
+        let (w, h) = text_size(scale, &font, &text);
+        (w as f32, h as f32)
+    };
 
     if text_width > txt_crop.width && text_width > 0.0 {
         font_size = (font_size * (txt_crop.width / text_width)).max(6.0);
         scale = Scale::uniform(font_size);
-        text_width = text_size(scale, &font, &text).0 as f32;
+        let (w, h) = text_size(scale, &font, &text);
+        text_width = w as f32;
+        text_height = h as f32;
     }
 
-    let text_height = text_size(scale, &font, &text).1 as f32;
+    if text_height > txt_crop.height && text_height > 0.0 {
+        font_size = (font_size * (txt_crop.height / text_height)).max(6.0);
+        scale = Scale::uniform(font_size);
+        let (w, h) = text_size(scale, &font, &text);
+        text_width = w as f32;
+        text_height = h as f32;
+    }
 
-    // Center the text within the crop_number area.
-    let text_x = (txt_crop.x + (txt_crop.width - text_width) / 2.0).max(0.0) as i32;
-    let text_y = (txt_crop.y + (txt_crop.height - text_height) / 2.0).max(0.0) as i32;
+    // Center the text within the crop_number area, clamped so it never draws
+    // outside it even if it still doesn't fully fit at the minimum font size.
+    let text_x = (txt_crop.x + (txt_crop.width - text_width) / 2.0)
+        .max(txt_crop.x)
+        .min((txt_crop.x + txt_crop.width - text_width).max(txt_crop.x)) as i32;
+    let text_y = (txt_crop.y + (txt_crop.height - text_height) / 2.0)
+        .max(txt_crop.y)
+        .min((txt_crop.y + txt_crop.height - text_height).max(txt_crop.y)) as i32;
 
     draw_text_mut(
         &mut rgba_image,
@@ -823,6 +862,7 @@ pub fn run() {
             update_photo_template,
             delete_photo_template,
             save_template_image,
+            load_image_as_data_url,
             select_image_folder,
             select_output_folder,
             prepare_generation,
@@ -1004,15 +1044,29 @@ mod tests {
     // --- Image resizing ---
 
     #[test]
-    fn load_and_resize_image_preserves_aspect_ratio() {
+    fn load_and_resize_image_cover_fills_target_without_distortion() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("source.png");
-        let img = DynamicImage::new_rgba8(100, 50);
+        let mut img = DynamicImage::new_rgb8(100, 50);
+        {
+            let rgb = img.as_mut_rgb8().unwrap();
+            for (x, _y, pixel) in rgb.enumerate_pixels_mut() {
+                *pixel = if x < 50 { image::Rgb([255, 0, 0]) } else { image::Rgb([0, 0, 255]) };
+            }
+        }
         img.save(&path).unwrap();
 
-        let resized = load_and_resize_image(&path, 50, 50, true).unwrap();
-        assert_eq!(resized.width(), 50);
-        assert_eq!(resized.height(), 25);
+        // Target is narrower (in aspect ratio terms) than the source, so covering
+        // it means scaling to match the target height and cropping the sides.
+        let covered = load_and_resize_image_cover(&path, 50, 50).unwrap();
+        assert_eq!(covered.width(), 50);
+        assert_eq!(covered.height(), 50);
+
+        let rgb = covered.to_rgb8();
+        // Center-cropped: the left part of the result is still red, the right blue —
+        // i.e. it fills the box without stretching either color region.
+        assert_eq!(rgb.get_pixel(0, 25), &image::Rgb([255, 0, 0]));
+        assert_eq!(rgb.get_pixel(49, 25), &image::Rgb([0, 0, 255]));
     }
 
     // --- Compositing ---
