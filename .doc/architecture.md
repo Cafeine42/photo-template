@@ -52,7 +52,7 @@ appelée depuis `main.rs` via `photo_template_lib::run()`.
 | `lib.rs` | Contient **toutes** les commandes Tauri et la logique métier (accès DB, traitement d'images, zip). Pas de découpage en modules pour l'instant. |
 | `models.rs` | Structs Diesel `PhotoTemplate`/`NewPhotoTemplate` et `GenerationHistoryEntry`/`NewGenerationHistoryEntry` (Queryable/Insertable). |
 | `schema.rs` | Schéma généré par Diesel CLI (tables `photo_templates` et `generation_history`). |
-| `migrations/` | Migrations Diesel : création de `photo_templates`, puis de `generation_history`. |
+| `migrations/` | Migrations Diesel : création de `photo_templates`, ajout de `generation_history`, puis ajout de la colonne `category` à `photo_templates`. |
 | `capabilities/default.json` | Permissions Tauri 2 (ACL) pour la fenêtre `main` : `core:default`, `opener:default`, `sql:default`, `dialog:default`. |
 | `fonts/DejaVuSans.ttf` | Police embarquée (`include_bytes!`) utilisée pour dessiner le numéro sur les images générées. |
 
@@ -61,7 +61,7 @@ appelée depuis `main.rs` via `photo_template_lib::run()`.
 | Commande | Entrée | Sortie | Description |
 |---|---|---|---|
 | `greet` | `name` | `String` | Commande de démo du template Tauri, non utilisée par l'UI. |
-| `add_photo_template` | name, crop_photo, crop_number, template_img | `PhotoTemplate` | Insère un template puis relit la ligne via `last_insert_rowid()`. |
+| `add_photo_template` | name, crop_photo, crop_number, template_img, category | `PhotoTemplate` | Insère un template puis relit la ligne via `last_insert_rowid()`. |
 | `get_photo_templates` | — | `Vec<PhotoTemplate>` | Liste tous les templates. |
 | `update_photo_template` | id + champs | `PhotoTemplate` | Met à jour un template. |
 | `delete_photo_template` | id | `String` | Supprime un template. |
@@ -70,7 +70,7 @@ appelée depuis `main.rs` via `photo_template_lib::run()`.
 | `select_output_folder` | — | `String` (chemin) | Même mécanisme que `select_image_folder`, factorisé via `pick_folder_dialog`, pour choisir le dossier de sortie de la génération. |
 | `prepare_generation` | image_folder_path | `{ entries: [{key, file_name, extracted_number}], skipped_subfolder_image_count }` | Analyse le dossier source sans traiter les images : liste les fichiers + numéro détecté par fichier, et compte les images ignorées car situées dans des sous-dossiers. |
 | `preview_generation_image` | template_id, image_folder_path, number_overrides? | `String` (data URL PNG base64) | Compose le rendu de la **première** image du dossier avec le template, pour aperçu avant traitement complet. |
-| `generate_images_with_template` | template_id, image_folder_path, output_folder_path?, number_overrides? | `String` (chemin du zip) | Pipeline complet de génération (voir `fonctionnalites.md`). Émet l'évènement `generation-progress` (0–100), vérifie `GenerationCancelFlag` à chaque image, enregistre l'exécution dans `generation_history`. |
+| `generate_images_with_template` | template_id, image_folder_path, output_folder_path?, number_overrides?, output_format? ("jpeg"\|"png"), jpeg_quality? (1-100) | `String` (chemin du zip) | Pipeline complet de génération (voir `fonctionnalites.md`). Émet l'évènement `generation-progress` (0–100), vérifie `GenerationCancelFlag` à chaque image, enregistre l'exécution dans `generation_history`. |
 | `cancel_generation` | — | — | Positionne `GenerationCancelFlag` à `true` ; la génération en cours s'arrête au prochain contrôle (avant l'image suivante). |
 | `get_generation_history` | — | `Vec<GenerationHistoryEntry>` | Liste l'historique des générations, plus récentes en premier. |
 | `download_archive` | archive_path | — | Ouvre le dossier parent de l'archive dans l'explorateur système (`tauri-plugin-opener`). Réutilisé par l'historique pour rouvrir une génération passée. |
@@ -124,7 +124,7 @@ aussi par `prepare_generation`/`preview_generation_image` :
 
 ## Configuration Tauri (`tauri.conf.json`)
 
-- Fenêtre unique `main`, 800×600.
+- Fenêtre unique `main`, 1280×860 par défaut (minimum 900×600), redimensionnable.
 - `security.csp: null` — pas de Content-Security-Policy définie (voir known-issues.md).
 - `beforeDevCommand` / `beforeBuildCommand` pointent vers `yarn dev` / `yarn build`,
   `frontendDist: ../dist`.

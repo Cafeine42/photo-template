@@ -178,6 +178,31 @@ button {
   border-color: #c82333;
 }
 
+/* Templates list filters */
+.list-filters {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0 1rem;
+  margin-top: 1rem;
+}
+
+.list-search-input {
+  flex: 1;
+  min-width: 220px;
+}
+
+.template-category-badge {
+  display: inline-block;
+  background-color: #eef2ff;
+  color: #4338ca;
+  border-radius: 999px;
+  padding: 0.2rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  margin-bottom: 0.75rem;
+}
+
 /* Templates List Styles */
 .templates-list {
   display: grid;
@@ -641,6 +666,43 @@ button[type="submit"]:disabled {
   border-color: #218838;
 }
 
+/* Onboarding banner */
+.onboarding-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  background-color: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1e40af;
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  margin: 0 1rem 1.5rem;
+}
+
+.onboarding-banner p {
+  margin: 0;
+  flex: 1;
+  min-width: 240px;
+}
+
+.output-format-controls {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.jpeg-quality-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #4b5563;
+}
+
 /* Generation preparation: subfolder warning, number review table, preview */
 .warning-message {
   background-color: #fff7ed;
@@ -933,6 +995,17 @@ button[type="submit"]:disabled {
     background-color: #451a03;
     color: #fdba74;
     border-color: #9a3412;
+  }
+
+  .onboarding-banner {
+    background-color: #1e293b;
+    border-color: #334155;
+    color: #bfdbfe;
+  }
+
+  .template-category-badge {
+    background-color: #312e81;
+    color: #c7d2fe;
   }
 
   .number-review-table {

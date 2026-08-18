@@ -91,6 +91,7 @@ fn add_photo_template(
     crop_photo: String,
     crop_number: String,
     template_img: String,
+    category: String,
 ) -> Result<PhotoTemplate, String> {
     let mut connection = establish_connection();
     add_photo_template_impl(
@@ -100,6 +101,7 @@ fn add_photo_template(
             crop_photo,
             crop_number,
             template_img,
+            category,
         },
     )
 }
@@ -123,6 +125,7 @@ fn update_photo_template_impl(
     crop_photo: String,
     crop_number: String,
     template_img: String,
+    category: String,
 ) -> Result<PhotoTemplate, String> {
     diesel::update(photo_templates::table.find(id))
         .set((
@@ -130,6 +133,7 @@ fn update_photo_template_impl(
             photo_templates::crop_photo.eq(crop_photo),
             photo_templates::crop_number.eq(crop_number),
             photo_templates::template_img.eq(template_img),
+            photo_templates::category.eq(category),
         ))
         .execute(connection)
         .map_err(|e| format!("Error updating photo template: {}", e))?;
@@ -148,9 +152,10 @@ fn update_photo_template(
     crop_photo: String,
     crop_number: String,
     template_img: String,
+    category: String,
 ) -> Result<PhotoTemplate, String> {
     let mut connection = establish_connection();
-    update_photo_template_impl(&mut connection, id, name, crop_photo, crop_number, template_img)
+    update_photo_template_impl(&mut connection, id, name, crop_photo, crop_number, template_img, category)
 }
 
 fn delete_photo_template_impl(connection: &mut SqliteConnection, id: i32) -> Result<String, String> {
@@ -346,8 +351,16 @@ async fn generate_images_with_template(
     image_folder_path: String,
     output_folder_path: Option<String>,
     number_overrides: Option<HashMap<String, String>>,
+    output_format: Option<String>,
+    jpeg_quality: Option<u8>,
 ) -> Result<String, String> {
     cancel_flag.0.store(false, Ordering::Relaxed);
+
+    let output_format = match output_format.as_deref() {
+        Some("png") => OutputFormat::Png,
+        _ => OutputFormat::Jpeg,
+    };
+    let jpeg_quality = jpeg_quality.unwrap_or(90).clamp(1, 100);
 
     // 1. Get PhotoTemplate from database
     let mut connection = establish_connection();
@@ -424,10 +437,9 @@ async fn generate_images_with_template(
             Some(name) => name.to_string(),
             None => format!("image_{}", index + 1),
         };
-        let output_filename = format!("{}_processed.jpg", original_filename);
+        let output_filename = format!("{}_processed.{}", original_filename, output_format.extension());
         let output_path = output_dir.join(&output_filename);
-        result_image.save(&output_path)
-            .map_err(|e| format!("Error saving image: {}", e))?;
+        save_processed_image(&result_image, &output_path, output_format, jpeg_quality)?;
 
         processed_files.push(output_path);
 
@@ -480,6 +492,42 @@ fn get_generation_history() -> Result<Vec<GenerationHistoryEntry>, String> {
 }
 
 // Utility functions for image processing
+
+#[derive(Clone, Copy)]
+enum OutputFormat {
+    Jpeg,
+    Png,
+}
+
+impl OutputFormat {
+    fn extension(&self) -> &'static str {
+        match self {
+            OutputFormat::Jpeg => "jpg",
+            OutputFormat::Png => "png",
+        }
+    }
+}
+
+fn save_processed_image(
+    image: &DynamicImage,
+    output_path: &Path,
+    format: OutputFormat,
+    jpeg_quality: u8,
+) -> Result<(), String> {
+    match format {
+        OutputFormat::Png => image
+            .save_with_format(output_path, image::ImageFormat::Png)
+            .map_err(|e| format!("Error saving image: {}", e)),
+        OutputFormat::Jpeg => {
+            let mut file = fs::File::create(output_path)
+                .map_err(|e| format!("Error creating output file: {}", e))?;
+            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut file, jpeg_quality);
+            encoder
+                .encode_image(image)
+                .map_err(|e| format!("Error encoding jpeg: {}", e))
+        }
+    }
+}
 
 fn load_image(image_path: &str) -> Result<DynamicImage, String> {
     image::open(image_path)
@@ -790,6 +838,7 @@ mod tests {
             crop_photo: r#"{"x":0.0,"y":0.0,"width":10.0,"height":10.0}"#.to_string(),
             crop_number: r#"{"x":0.0,"y":0.0,"width":5.0,"height":5.0}"#.to_string(),
             template_img: "template.png".to_string(),
+            category: "".to_string(),
         }
     }
 
@@ -818,11 +867,13 @@ mod tests {
             created.crop_photo.clone(),
             created.crop_number.clone(),
             created.template_img.clone(),
+            "Evenements".to_string(),
         )
         .unwrap();
 
         assert_eq!(updated.name, "Renamed");
         assert_eq!(updated.id, created.id);
+        assert_eq!(updated.category, "Evenements");
     }
 
     #[test]
@@ -1045,6 +1096,22 @@ mod tests {
         }
 
         assert!(found_green, "expected the custom green color to appear in the rendered text");
+    }
+
+    #[test]
+    fn save_processed_image_supports_png_and_jpeg() {
+        let dir = tempdir().unwrap();
+        let image = DynamicImage::new_rgb8(10, 10);
+
+        let png_path = dir.path().join("out.png");
+        save_processed_image(&image, &png_path, OutputFormat::Png, 90).unwrap();
+        let reopened_png = image::open(&png_path).unwrap();
+        assert_eq!(reopened_png.width(), 10);
+
+        let jpg_path = dir.path().join("out.jpg");
+        save_processed_image(&image, &jpg_path, OutputFormat::Jpeg, 50).unwrap();
+        let reopened_jpg = image::open(&jpg_path).unwrap();
+        assert_eq!(reopened_jpg.width(), 10);
     }
 
     // --- Archive creation ---

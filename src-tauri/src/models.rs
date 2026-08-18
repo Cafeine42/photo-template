@@ -10,6 +10,7 @@ pub struct PhotoTemplate {
     pub crop_photo: String,
     pub crop_number: String,
     pub template_img: String,
+    pub category: String,
 }
 
 #[derive(Insertable, Deserialize)]
@@ -19,6 +20,7 @@ pub struct NewPhotoTemplate {
     pub crop_photo: String,
     pub crop_number: String,
     pub template_img: String,
+    pub category: String,
 }
 
 #[derive(Queryable, Selectable, Serialize, Deserialize, Debug)]

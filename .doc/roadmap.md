@@ -41,25 +41,15 @@ Concerne l'écran de création/modification, initialement limité au dessin appr
 16. ✅ **Remplacement d'image sans perdre les zones** — les zones ne sont plus réinitialisées à l'upload d'une nouvelle image.
 17. ✅ **Duplication d'un template existant** — bouton "Dupliquer" dans la liste, pré-remplit le formulaire de création à partir d'un template existant.
 
-## Phase 4 — Confort, organisation, montée en charge
+## Phase 4 — Confort, organisation, montée en charge ✅ fait
 
 Utile si le nombre de templates/générations grandit ou si plusieurs utilisateurs
 partagent l'outil.
 
-18. **Recherche / tri / catégories dans la liste des templates**
-    Pas de souci à petite échelle, mais devient nécessaire dès qu'il y a plus
-    qu'une poignée de templates.
-19. **Choix du format et de la qualité de sortie**
-    La sortie est toujours en JPEG, qualité par défaut. Permettre PNG (transparence)
-    ou un curseur de qualité/compression selon l'usage (impression vs partage web).
-20. **Onboarding / aide contextuelle**
-    Rien n'explique à un nouvel utilisateur qu'il doit dessiner deux rectangles à la
-    souris et dans quel ordre. Un court guide ou des info-bulles réduirait la courbe
-    d'apprentissage.
-21. **Redimensionnement de la fenêtre / mise en page adaptative**
-    La fenêtre est fixée à 800×600. Sur un grand écran ou pour un gros template,
-    l'espace de travail est à l'étroit ; rendre l'UI responsive améliorerait le
-    confort d'édition.
+18. ✅ **Recherche / tri / catégories dans la liste des templates** — recherche par nom, tri (nom/plus récent/plus ancien), filtre par catégorie (nouvelle colonne `category`, optionnelle).
+19. ✅ **Choix du format et de la qualité de sortie** — JPEG (avec curseur de qualité) ou PNG, au choix avant de lancer la génération.
+20. ✅ **Onboarding / aide contextuelle** — bandeau explicatif sur l'écran de création/édition, masquable définitivement.
+21. ✅ **Redimensionnement de la fenêtre / mise en page adaptative** — fenêtre par défaut agrandie (1280×860, min 900×600), redimensionnable ; la mise en page CSS existante s'adapte déjà (breakpoints déjà en place).
 
 ---
 

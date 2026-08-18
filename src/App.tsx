@@ -14,6 +14,7 @@ type ViewMode = 'list' | 'create' | 'edit' | 'generate' | 'history';
 
 const LAST_IMAGE_FOLDER_KEY = "photo-template:lastImageFolder";
 const LAST_OUTPUT_FOLDER_KEY = "photo-template:lastOutputFolder";
+const ONBOARDING_DISMISSED_KEY = "photo-template:onboardingDismissed";
 
 // --- Crop zone geometry (resize/move handles, zoom-aware coordinates) ---
 
@@ -87,7 +88,8 @@ function App() {
     name: "",
     crop_photo: "",
     crop_number: "",
-    template_img: ""
+    template_img: "",
+    category: ""
   });
   const [message, setMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -120,11 +122,25 @@ function App() {
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [isPreviewLoading, setIsPreviewLoading] = useState<boolean>(false);
 
+  // Format et qualité des images de sortie
+  const [outputFormat, setOutputFormat] = useState<'jpeg' | 'png'>('jpeg');
+  const [jpegQuality, setJpegQuality] = useState<number>(90);
+
   // Historique des générations
   const [historyEntries, setHistoryEntries] = useState<GenerationHistoryEntry[]>([]);
 
   // Confirmation de suppression
   const [pendingDelete, setPendingDelete] = useState<PhotoTemplate | null>(null);
+
+  // Aide contextuelle affichée jusqu'à ce que l'utilisateur la ferme
+  const [showOnboarding, setShowOnboarding] = useState(
+    () => localStorage.getItem(ONBOARDING_DISMISSED_KEY) !== 'true'
+  );
+
+  const dismissOnboarding = () => {
+    localStorage.setItem(ONBOARDING_DISMISSED_KEY, 'true');
+    setShowOnboarding(false);
+  };
 
   // Tauri invocation functions
   const selectImageFolder = async () => {
@@ -189,6 +205,8 @@ function App() {
         imageFolderPath: selectedImageFolder,
         outputFolderPath: selectedOutputFolder || null,
         numberOverrides,
+        outputFormat,
+        jpegQuality,
       });
 
       setArchivePath(archivePath);
@@ -323,7 +341,8 @@ function App() {
       name: "",
       crop_photo: "",
       crop_number: "",
-      template_img: ""
+      template_img: "",
+      category: ""
     });
     setEditingTemplate(null);
     setMessage("");
@@ -344,7 +363,8 @@ function App() {
       name: template.name,
       crop_photo: template.crop_photo,
       crop_number: template.crop_number,
-      template_img: template.template_img
+      template_img: template.template_img,
+      category: template.category || ""
     });
     setEditingTemplate(template);
     setCurrentMode('edit');
@@ -384,7 +404,8 @@ function App() {
       name: `${template.name} (copie)`,
       crop_photo: template.crop_photo,
       crop_number: template.crop_number,
-      template_img: template.template_img
+      template_img: template.template_img,
+      category: template.category || ""
     });
     setEditingTemplate(null);
     setCurrentMode('create');
@@ -461,7 +482,8 @@ function App() {
           name: finalFormData.name,
           cropPhoto: finalFormData.crop_photo,
           cropNumber: finalFormData.crop_number,
-          templateImg: finalFormData.template_img
+          templateImg: finalFormData.template_img,
+          category: finalFormData.category
         });
         setMessage("Photo Template ajouté avec succès!");
       } else if (currentMode === 'edit' && editingTemplate) {
@@ -470,7 +492,8 @@ function App() {
           name: finalFormData.name,
           cropPhoto: finalFormData.crop_photo,
           cropNumber: finalFormData.crop_number,
-          templateImg: finalFormData.template_img
+          templateImg: finalFormData.template_img,
+          category: finalFormData.category
         });
         setMessage("Photo Template modifié avec succès!");
       }
@@ -740,6 +763,10 @@ function App() {
         previewImage={previewImage}
         isPreviewLoading={isPreviewLoading}
         onGeneratePreview={generatePreview}
+        outputFormat={outputFormat}
+        onOutputFormatChange={setOutputFormat}
+        jpegQuality={jpegQuality}
+        onJpegQualityChange={setJpegQuality}
         onGenerate={generateImages}
         onCancelGeneration={cancelGeneration}
         generationProgress={generationProgress}
@@ -760,6 +787,20 @@ function App() {
         </button>
       </div>
 
+      {showOnboarding && (
+        <div className="onboarding-banner">
+          <p>
+            <strong>Comment créer un template :</strong> donnez un nom et téléversez une
+            image, puis choisissez "Zone Photo" et dessinez un rectangle à l'endroit où
+            la photo sera insérée, faites de même pour "Zone Numéro", et affinez si
+            besoin avec les poignées, les champs numériques ou le zoom.
+          </p>
+          <button type="button" className="btn btn-secondary" onClick={dismissOnboarding}>
+            Compris, ne plus afficher
+          </button>
+        </div>
+      )}
+
       <form className="photo-template-form" onSubmit={handleSubmit}>
         <div className="editor-layout">
           <div className="form-fields">
@@ -772,6 +813,19 @@ function App() {
                 value={formData.name}
                 onChange={handleInputChange}
                 placeholder="Nom du template..."
+                disabled={isLoading}
+              />
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="category">Catégorie (optionnel):</label>
+              <input
+                id="category"
+                name="category"
+                type="text"
+                value={formData.category}
+                onChange={handleInputChange}
+                placeholder="Ex: Diplômes, Badges..."
                 disabled={isLoading}
               />
             </div>

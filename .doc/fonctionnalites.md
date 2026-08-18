@@ -8,7 +8,10 @@ numéro dans le template.
 ## 1. Liste des templates (`TemplateListView`)
 
 Écran d'accueil. Affiche tous les `PhotoTemplate` enregistrés en base sous forme de
-cartes avec **vignette** (aperçu de l'image du template), avec pour chacune :
+cartes avec **vignette** (aperçu de l'image du template) et un badge de **catégorie**
+si renseignée. Une barre au-dessus de la liste permet de **rechercher** par nom, de
+**filtrer par catégorie** et de **trier** (nom A→Z/Z→A, plus récent/plus ancien).
+Pour chaque template :
 - **Modifier** → bascule vers le formulaire d'édition.
 - **Dupliquer** → crée un nouveau template pré-rempli avec le même nom (+ "(copie)"),
   la même image et les mêmes zones de recadrage, sans passer par le dessin manuel.
@@ -19,7 +22,11 @@ Actions globales : **Créer un nouveau Photo Template**, **Générer des images*
 
 ## 2. Création / édition d'un template (formulaire dans `App.tsx`)
 
-1. L'utilisateur donne un **nom**.
+Un bandeau d'aide contextuelle (masquable définitivement) rappelle les étapes lors de
+la première utilisation.
+
+1. L'utilisateur donne un **nom** et, optionnellement, une **catégorie** libre (texte),
+   utilisée ensuite pour filtrer la liste.
 2. Il **téléverse une image** de template (upload de fichier) :
    - le fichier est envoyé en octets à la commande Rust `save_template_image`,
    - qui l'écrit sur disque dans `<app_data_dir>/template_images/<timestamp>_<nom>.<ext>`
@@ -69,7 +76,8 @@ reçoivent des valeurs par défaut (noir, 100%).
 4. Un bouton **Aperçu avant génération** (`preview_generation_image`) compose le rendu de
    la première image du dossier avec le template et les numéros (corrigés ou non), et
    l'affiche directement dans l'interface — sans traiter tout le lot.
-5. Il lance la génération complète (`generate_images_with_template`), qui pour **chaque
+5. Il choisit le **format de sortie** (JPEG, avec un curseur de qualité 10–100%, ou PNG)
+   puis lance la génération complète (`generate_images_with_template`), qui pour **chaque
    image** du dossier (extensions `jpg, jpeg, png, bmp, gif, tiff`, non récursif) :
    - redimensionne l'image source pour tenir dans la zone "Photo" du template
      (ratio conservé, filtre Lanczos3),
@@ -78,7 +86,8 @@ reçoivent des valeurs par défaut (noir, 100%).
      chiffre trouvé),
    - **compose** l'image : incruste la photo (centrée dans la zone rouge) sur le
      template, puis dessine le numéro en texte réel dans la zone "Numéro" (bleue),
-   - sauvegarde le résultat en JPEG dans le dossier de sortie choisi (ou celui par défaut),
+   - sauvegarde le résultat dans le format choisi, dans le dossier de sortie sélectionné
+     (ou celui par défaut),
    - émet un évènement Tauri `generation-progress` (pourcentage) écouté par le
      frontend pour animer une barre de progression.
    Un bouton **Annuler** (`cancel_generation`) permet d'interrompre le traitement en
@@ -108,6 +117,7 @@ un bouton pour rouvrir le dossier de résultat correspondant.
 | `crop_photo`    | text   | JSON `{x,y,width,height}` — zone d'incrustation de la photo |
 | `crop_number`   | text   | JSON `{x,y,width,height,color?,fontScale?}` — zone d'affichage du numéro (couleur hex et multiplicateur de taille de police, optionnels) |
 | `template_img`  | text   | chemin absolu du fichier image du template sur le disque    |
+| `category`      | text   | catégorie libre, optionnelle (chaîne vide par défaut), utilisée pour filtrer la liste |
 
 `GenerationHistoryEntry` (table SQLite `generation_history`) :
 

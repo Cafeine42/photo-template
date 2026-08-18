@@ -16,6 +16,10 @@ interface TemplateGenerationViewProps {
   previewImage: string | null;
   isPreviewLoading: boolean;
   onGeneratePreview: () => void;
+  outputFormat: 'jpeg' | 'png';
+  onOutputFormatChange: (format: 'jpeg' | 'png') => void;
+  jpegQuality: number;
+  onJpegQualityChange: (quality: number) => void;
   onGenerate: () => void;
   onCancelGeneration: () => void;
   generationProgress: number;
@@ -39,6 +43,10 @@ const TemplateGenerationView = ({
   previewImage,
   isPreviewLoading,
   onGeneratePreview,
+  outputFormat,
+  onOutputFormatChange,
+  jpegQuality,
+  onJpegQualityChange,
   onGenerate,
   onCancelGeneration,
   generationProgress,
@@ -126,6 +134,34 @@ const TemplateGenerationView = ({
             >
               Parcourir
             </button>
+          </div>
+        </div>
+
+        <div className="form-group">
+          <label>Format de sortie:</label>
+          <div className="output-format-controls">
+            <select
+              value={outputFormat}
+              onChange={(e) => onOutputFormatChange(e.target.value as 'jpeg' | 'png')}
+              disabled={isGenerating}
+            >
+              <option value="jpeg">JPEG</option>
+              <option value="png">PNG</option>
+            </select>
+            {outputFormat === 'jpeg' && (
+              <label className="jpeg-quality-label">
+                Qualité ({jpegQuality}%)
+                <input
+                  type="range"
+                  min={10}
+                  max={100}
+                  step={5}
+                  value={jpegQuality}
+                  onChange={(e) => onJpegQualityChange(Number(e.target.value))}
+                  disabled={isGenerating}
+                />
+              </label>
+            )}
           </div>
         </div>
 

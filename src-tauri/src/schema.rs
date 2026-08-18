@@ -7,6 +7,7 @@ diesel::table! {
         crop_photo -> Text,
         crop_number -> Text,
         template_img -> Text,
+        category -> Text,
     }
 }
 
