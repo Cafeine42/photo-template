@@ -3,20 +3,48 @@
 Ce document explique comment produire un installeur Windows (`.msi` et/ou `.exe`
 NSIS) de l'application, pour la distribuer à des clients.
 
-## Pourquoi builder sur Windows (et pas en cross-compilation)
+## Pourquoi builder sur Windows (et pas en cross-compilation depuis Linux/Docker)
 
 L'application embarque des dépendances natives (Diesel/SQLite, `image`, WebView2)
 compilées pour la cible. Tauri **recommande officiellement** de builder sur le système
-d'exploitation cible plutôt que de cross-compiler depuis Linux/macOS : la
-cross-compilation vers `x86_64-pc-windows-msvc` ou `-gnu` est fragile pour ce genre de
-dépendances et n'est pas un chemin de distribution fiable. Deux options viables :
+d'exploitation cible plutôt que de cross-compiler depuis Linux/macOS (y compris via un
+conteneur Docker avec une toolchain de cross-compilation type `cargo-xwin`) : c'est une
+pratique communautaire non maintenue par l'équipe Tauri, fragile (packaging WiX/NSIS
+moins complet sur Linux, dépendances natives à risque), et surtout **impossible à
+tester avant diffusion** — le binaire produit ne peut être lancé pour vérifier qu'il
+démarre correctement chez un client, puisqu'on ne dispose pas de Windows dans la boucle.
 
-1. **Builder directement sur une machine Windows** (ce document).
-2. **CI GitHub Actions avec un runner `windows-latest`** (via `tauri-action`) — plus
-   pratique pour des builds répétés à chaque nouvelle version, non couvert ici mais
-   recommandable si les builds deviennent fréquents.
+Deux options fiables, retenues pour ce projet :
 
-## Prérequis (une seule fois par machine Windows)
+1. **CI GitHub Actions avec un runner `windows-latest`** (ci-dessous) — build sur une
+   vraie machine Windows hébergée par GitHub, sans matériel Windows physique.
+2. **Builder directement sur une machine Windows** — utile en dépannage ou pour un test
+   ponctuel (section suivante).
+
+## Option recommandée : CI GitHub Actions (`.github/workflows/build-windows.yml`)
+
+Le dépôt contient un workflow prêt à l'emploi qui compile et package l'app sur un
+runner Windows natif GitHub, sans étape de cross-compilation :
+
+- **Déclenchement** : manuellement depuis l'onglet *Actions* du dépôt GitHub
+  (`workflow_dispatch`), ou automatiquement en poussant un tag `v*` (ex. `v0.2.0`).
+- **Résultat** : les installeurs (`.msi` et `.exe`) sont attachés comme **artefact du
+  run** (onglet *Actions* → le run correspondant → section *Artifacts*), téléchargeables
+  par toute personne ayant accès au dépôt. **Rien n'est publié publiquement** (pas de
+  GitHub Release créée automatiquement) — la diffusion aux clients reste une étape
+  manuelle et volontaire.
+- **Étapes** : checkout → activation de Corepack (respecte la version Yarn épinglée
+  dans `package.json`) → Node 20 → toolchain Rust stable → cache Cargo
+  (`Swatinem/rust-cache`) → `yarn install` → `yarn tauri build` → upload des `.msi`/`.exe`.
+
+Pour lancer un build : onglet **Actions** du dépôt GitHub → workflow **"Build Windows"**
+→ **Run workflow**. Suivre la progression, puis télécharger l'artefact
+`photo-template-windows` une fois le run terminé (compte plusieurs minutes, le premier
+run étant plus long le temps de peupler le cache Cargo).
+
+## Alternative : builder directement sur une machine Windows physique
+
+### Prérequis (une seule fois par machine Windows)
 
 | Outil | Pourquoi | Où l'obtenir |
 |---|---|---|
@@ -34,7 +62,7 @@ node --version
 yarn --version
 ```
 
-## Étapes de build
+### Étapes de build
 
 ```powershell
 git clone git@github.com:Cafeine42/photo-template.git

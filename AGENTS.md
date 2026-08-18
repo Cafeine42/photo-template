@@ -78,3 +78,11 @@ yarn tauri build                                  # packaging natif
 
 Détails complets (prérequis plateforme, lint, matrice de versions) : voir
 `.junie/guidelines.md`.
+
+## Build Windows pour distribution client
+
+Ne pas cross-compiler depuis Linux/Docker (fragile, non supporté officiellement par
+Tauri, impossible à tester avant diffusion). Utiliser le workflow CI
+`.github/workflows/build-windows.yml` (runner `windows-latest`, déclenchable
+manuellement ou sur tag `v*`) ou builder directement sur une machine Windows. Détails :
+`.doc/build-windows.md`.
