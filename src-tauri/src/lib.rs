@@ -3,7 +3,8 @@ use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, Emitter};
 use image::{DynamicImage, Rgba};
 use std::io::Write;
@@ -14,6 +15,7 @@ use regex::Regex;
 use imageproc::drawing::{draw_text_mut, text_size};
 use rusttype::{Font, Scale};
 use base64::{engine::general_purpose, Engine as _};
+use rayon::prelude::*;
 
 pub mod models;
 pub mod schema;
@@ -393,8 +395,11 @@ async fn generate_images_with_template(
         None
     };
 
-    // 3. Load template image
-    let template_image = load_image(&template.template_img)?;
+    // 3. Load template image. Shared read-only across worker threads via Arc so
+    // it's decoded once and never duplicated in memory — each worker only
+    // clones it into its own composited output buffer (unavoidable per image,
+    // same as the previous sequential version).
+    let template_image = Arc::new(load_image(&template.template_img)?);
 
     // 4. Find all image files in the folder
     let image_files = find_image_files(&image_folder_path)?;
@@ -414,49 +419,85 @@ async fn generate_images_with_template(
     fs::create_dir_all(&output_dir)
         .map_err(|e| format!("Error creating output directory: {}", e))?;
 
-    // 6. Process each image
-    let mut processed_files = Vec::new();
+    // 6. Process each image in parallel across available cores. Each worker
+    // only touches its own image and only clones the shared template once
+    // (into its own output buffer), so memory scales with the number of
+    // images being composited concurrently, not with the whole batch.
+    // Cancellation and fail-fast-on-error are cooperative: a worker checks
+    // the shared flags before starting, so already-running work still
+    // finishes, and completion order (hence progress ticks) is no longer
+    // tied to the source file order.
     let total_images = image_files.len();
+    let processed_count = AtomicUsize::new(0);
+    let should_stop = AtomicBool::new(false);
+    let first_error: Mutex<Option<String>> = Mutex::new(None);
 
-    for (index, image_file) in image_files.iter().enumerate() {
-        if cancel_flag.0.load(Ordering::Relaxed) {
-            return Err(format!(
-                "Génération annulée après {} image(s) traitée(s) sur {}",
-                index, total_images
-            ));
-        }
+    let processed_files: Vec<PathBuf> = image_files
+        .par_iter()
+        .enumerate()
+        .filter_map(|(index, image_file)| {
+            if cancel_flag.0.load(Ordering::Relaxed) || should_stop.load(Ordering::Relaxed) {
+                return None;
+            }
 
-        // Load and resize source image
-        let source_image = load_and_resize_image_fit(
-            image_file,
-            crop_coords.width as u32,
-            crop_coords.height as u32,
-        )?;
+            let outcome: Result<PathBuf, String> = (|| {
+                // Load and resize source image
+                let source_image = load_and_resize_image_fit(
+                    image_file,
+                    crop_coords.width as u32,
+                    crop_coords.height as u32,
+                )?;
 
-        // Extract number from filename for text overlay, unless the user overrode it
-        let filename = image_file.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-        let extracted_number = number_overrides
-            .as_ref()
-            .and_then(|overrides| overrides.get(filename).cloned())
-            .unwrap_or_else(|| extract_number_from_filename(filename, index + 1));
+                // Extract number from filename for text overlay, unless the user overrode it
+                let filename = image_file.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                let extracted_number = number_overrides
+                    .as_ref()
+                    .and_then(|overrides| overrides.get(filename).cloned())
+                    .unwrap_or_else(|| extract_number_from_filename(filename, index + 1));
 
-        // Composite images with text overlay
-        let result_image = composite_images_with_text(&template_image, &source_image, &crop_coords, crop_number_coords.as_ref(), &extracted_number)?;
+                // Composite images with text overlay
+                let result_image = composite_images_with_text(&template_image, &source_image, &crop_coords, crop_number_coords.as_ref(), &extracted_number)?;
 
-        // Save result image - preserve original filename
-        let original_filename = match image_file.file_stem().and_then(|s| s.to_str()) {
-            Some(name) => name.to_string(),
-            None => format!("image_{}", index + 1),
-        };
-        let output_filename = format!("{}.{}", original_filename, output_format.extension());
-        let output_path = output_dir.join(&output_filename);
-        save_processed_image(&result_image, &output_path, output_format, jpeg_quality)?;
+                // Save result image - preserve original filename
+                let original_filename = match image_file.file_stem().and_then(|s| s.to_str()) {
+                    Some(name) => name.to_string(),
+                    None => format!("image_{}", index + 1),
+                };
+                let output_filename = format!("{}.{}", original_filename, output_format.extension());
+                let output_path = output_dir.join(&output_filename);
+                save_processed_image(&result_image, &output_path, output_format, jpeg_quality)?;
 
-        processed_files.push(output_path);
+                Ok(output_path)
+            })();
 
-        // Emit progress event
-        let progress = (index + 1) as f32 / total_images as f32 * 100.0;
-        app_handle.emit("generation-progress", progress).unwrap_or(());
+            match outcome {
+                Ok(output_path) => {
+                    let done = processed_count.fetch_add(1, Ordering::Relaxed) + 1;
+                    let progress = done as f32 / total_images as f32 * 100.0;
+                    app_handle.emit("generation-progress", progress).unwrap_or(());
+                    Some(output_path)
+                }
+                Err(e) => {
+                    should_stop.store(true, Ordering::Relaxed);
+                    let mut guard = first_error.lock().unwrap();
+                    if guard.is_none() {
+                        *guard = Some(e);
+                    }
+                    None
+                }
+            }
+        })
+        .collect();
+
+    if let Some(error) = first_error.into_inner().unwrap() {
+        return Err(error);
+    }
+
+    if cancel_flag.0.load(Ordering::Relaxed) {
+        return Err(format!(
+            "Génération annulée après {} image(s) traitée(s) sur {}",
+            processed_files.len(), total_images
+        ));
     }
 
     // 7. Create ZIP archive

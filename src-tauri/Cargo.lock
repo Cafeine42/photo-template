@@ -3334,6 +3334,7 @@ dependencies = [
  "diesel_migrations",
  "image",
  "imageproc",
+ "rayon",
  "regex",
  "rusttype",
  "serde",
